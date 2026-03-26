@@ -1,0 +1,297 @@
+import React, { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { ShieldCheck, TrendingDown, LayoutDashboard, Bell, Cloud, Activity, AlertTriangle, CheckCircle } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import axios from 'axios';
+import {
+  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, Filler
+} from 'chart.js';
+import { Line, Doughnut } from 'react-chartjs-2';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, Filler);
+
+const API_BASE = 'http://localhost:8000/api/v1';
+
+// Provide a mock token for local dev, usually retrieved via login
+const MOCK_TOKEN_PAYLOAD = btoa(JSON.stringify({ sub: "admin@cloudguard.io", role: "admin", exp: 9999999999 }));
+const MOCK_TOKEN = `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${MOCK_TOKEN_PAYLOAD}.mocksignature`;
+axios.defaults.headers.common['Authorization'] = `Bearer ${MOCK_TOKEN}`;
+
+// ─── API Fetches ─────────────────────────────────────────────────────────────
+const fetchFinOps = async () => (await axios.get(`${API_BASE}/finops/summary`)).data;
+const fetchCompliance = async () => (await axios.get(`${API_BASE}/compliance/score`)).data;
+const fetchCostTrends = async () => (await axios.get(`${API_BASE}/finops/cost-trends`)).data;
+const fetchAlerts = async () => (await axios.get(`${API_BASE}/alerts?limit=10`)).data;
+
+// ─── Layout ──────────────────────────────────────────────────────────────────
+const Layout = ({ children }: { children: React.ReactNode }) => {
+  const location = useLocation();
+
+  const navItems = [
+    { path: '/', icon: <LayoutDashboard size={20} />, label: 'Overview' },
+    { path: '/finops', icon: <TrendingDown size={20} />, label: 'FinOps' },
+    { path: '/compliance', icon: <ShieldCheck size={20} />, label: 'Compliance' },
+    { path: '/alerts', icon: <Activity size={20} />, label: 'Alerts' },
+  ];
+
+  return (
+    <div className="flex h-screen overflow-hidden">
+      {/* Sidebar */}
+      <aside className="w-64 glass-panel border-r border-dark-700 flex flex-col z-20">
+        <div className="p-6 flex items-center space-x-3 border-b border-dark-700">
+          <div className="p-2 bg-brand rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.5)]">
+            <Cloud size={24} className="text-white" />
+          </div>
+          <span className="text-xl font-bold tracking-wide">CloudGuard</span>
+        </div>
+        <nav className="flex-1 p-4 space-y-2">
+          {navItems.map((item) => (
+            <Link key={item.path} to={item.path}>
+              <div className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+                location.pathname === item.path
+                  ? 'bg-brand/10 text-brand border-l-2 border-brand font-medium'
+                  : 'text-gray-400 hover:bg-dark-700 hover:text-gray-200'
+              }`}>
+                {item.icon}
+                <span>{item.label}</span>
+              </div>
+            </Link>
+          ))}
+        </nav>
+        <div className="p-4 text-xs text-gray-500 text-center border-t border-dark-700">
+          admin@cloudguard.io
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto relative bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-dark-800 via-dark-900 to-dark-900">
+        <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-brand via-purple-500 to-brand z-10 opacity-50"></div>
+        <div className="p-8 pb-32">
+          {children}
+        </div>
+      </main>
+    </div>
+  );
+};
+
+// ─── SSE Alert Feed ──────────────────────────────────────────────────────────
+const AlertFeed = () => {
+  const [alerts, setAlerts] = useState<any[]>([]);
+
+  useEffect(() => {
+    import('axios').then(async () => {
+       const initial = await fetchAlerts();
+       setAlerts(initial);
+    });
+
+    const sse = new EventSource(`${API_BASE}/alerts/stream`);
+    sse.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type !== 'connected') {
+          setAlerts(prev => [data, ...prev].slice(0, 50));
+        }
+      } catch (e) {}
+    };
+    return () => sse.close();
+  }, []);
+
+  return (
+    <div className="glass-panel rounded-2xl overflow-hidden h-full flex flex-col">
+      <div className="p-4 border-b border-dark-700 flex items-center justify-between bg-dark-800">
+        <h3 className="text-lg font-semibold flex items-center gap-2">
+          <Bell className="text-yellow-500" size={18} /> Live Stream
+        </h3>
+        <span className="flex h-3 w-3 relative">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+        </span>
+      </div>
+      <div className="overflow-y-auto flex-1 p-2 space-y-2">
+        {alerts.map((a, i) => (
+          <div key={i} className="p-3 bg-dark-700/50 hover:bg-dark-700 rounded-lg border border-dark-600 transition-colors animate-in fade-in slide-in-from-right-4 duration-300">
+            <div className="flex justify-between items-start mb-1">
+              <span className={`text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                a.severity === 'critical' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                a.severity === 'high' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
+                a.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+              }`}>{a.type}</span>
+              <span className="text-xs text-gray-500">
+                {new Date(a.created_at).toLocaleTimeString()}
+              </span>
+            </div>
+            <p className="text-sm text-gray-200 mt-2">{a.message}</p>
+          </div>
+        ))}
+        {alerts.length === 0 && <div className="p-8 text-center text-gray-500">Waiting for events...</div>}
+      </div>
+    </div>
+  );
+};
+
+// ─── Dashboard Components ────────────────────────────────────────────────────
+const MetricCard = ({ title, value, sub, icon: Icon, color }: any) => (
+  <div className="glass-panel rounded-2xl p-6 relative overflow-hidden group hover:-translate-y-1 transition-transform duration-300">
+    <div className={`absolute top-0 right-0 p-4 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 transition-transform ${color}`}>
+      <Icon size={120} />
+    </div>
+    <div className="flex justify-between items-start relative z-10">
+      <div>
+        <h4 className="text-gray-400 font-medium mb-1">{title}</h4>
+        <div className="text-4xl font-bold tracking-tight mb-2 text-white">{value}</div>
+        <div className={`text-sm ${color}`}>{sub}</div>
+      </div>
+      <div className={`p-3 rounded-xl bg-dark-700 border border-dark-600 ${color}`}>
+        <Icon size={24} />
+      </div>
+    </div>
+  </div>
+);
+
+const Dashboard = () => {
+  const { data: finops, isLoading: fpLoad } = useQuery({ queryKey: ['finops'], queryFn: fetchFinOps, refetchInterval: 5000 });
+  const { data: comp, isLoading: cpLoad } = useQuery({ queryKey: ['comp'], queryFn: fetchCompliance, refetchInterval: 5000 });
+  const { data: trends, isLoading: tdLoad } = useQuery({ queryKey: ['trends'], queryFn: fetchCostTrends });
+
+  if (fpLoad || cpLoad || tdLoad) return <div className="flex justify-center items-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-brand"></div></div>;
+
+  const chartData = {
+    labels: trends?.map((t: any) => t.date) || [],
+    datasets: [
+      {
+        label: 'Daily Cost ($)',
+        data: trends?.map((t: any) => t.cost) || [],
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+      }
+    ]
+  };
+
+  const donutData = {
+    labels: ['Protected', 'Violations'],
+    datasets: [{
+      data: [comp?.overall_score || 0, 100 - (comp?.overall_score || 0)],
+      backgroundColor: ['#10b981', '#f43f5e'],
+      borderWidth: 0,
+      cutout: '80%',
+    }]
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex justify-between items-end mb-8">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Executive Summary</h1>
+          <p className="text-gray-400">Unified view of your cloud governance posture.</p>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <MetricCard title="Potential Savings" value={`$${finops?.total_savings_potential.toLocaleString()}`} sub="Found in idle & overprovisioned" icon={TrendingDown} color="text-brand" />
+        <MetricCard title="Compliance Score" value={`${comp?.overall_score}%`} sub={`${comp?.active_violations} Active Violations`} icon={ShieldCheck} color={comp?.overall_score > 80 ? "text-emerald-400" : "text-orange-400"} />
+        <MetricCard title="Critical Alerts" value={comp?.critical_violations || 0} sub="Requires immediate action" icon={AlertTriangle} color="text-red-400" />
+        <MetricCard title="Optimized Resources" value={(comp?.total_rules || 0) - (comp?.active_violations || 0)} sub="Healthy configurations" icon={CheckCircle} color="text-emerald-400" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[400px]">
+        {/* Cost Graph */}
+        <div className="lg:col-span-2 glass-panel rounded-2xl p-6 flex flex-col">
+          <h3 className="text-lg font-semibold mb-4">Cost Trend (30 Days)</h3>
+          <div className="flex-1 relative">
+            <Line options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#374151' } }, x: { grid: { display: false } } } }} data={chartData} />
+          </div>
+        </div>
+
+        {/* Live Feed */}
+        <div className="lg:col-span-1 h-full">
+          <AlertFeed />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Score Breakdown */}
+        <div className="glass-panel rounded-2xl p-6 flex gap-8 items-center justify-center">
+            <div className="w-48 h-48 relative">
+              <Doughnut data={donutData} options={{ responsive: true, cutout: '80%', plugins: { tooltip: { enabled: false } } }} />
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-4xl font-bold">{comp?.overall_score}%</span>
+                <span className="text-xs text-gray-400">Score</span>
+              </div>
+            </div>
+            <div className="space-y-4 flex-1">
+              <h3 className="font-semibold text-lg border-b border-dark-700 pb-2">By Category</h3>
+              {Object.entries(comp?.by_category || {}).map(([cat, val]: any) => (
+                <div key={cat}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-gray-300 capitalize">{cat.replace('_', ' ')}</span>
+                    <span className="text-white">{val}%</span>
+                  </div>
+                  <div className="w-full bg-dark-700 rounded-full h-1.5">
+                    <div className="bg-brand h-1.5 rounded-full" style={{ width: `${val}%` }}></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+        </div>
+
+        {/* FinOps Breakdown */}
+        <div className="glass-panel rounded-2xl p-6">
+          <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
+            <TrendingDown className="text-brand" /> Top Waste Sources
+          </h3>
+          <div className="space-y-4">
+             {/* Note: In a real app we would map over finops.waste_items. Mocking stats here. */}
+             <div className="flex justify-between items-center p-3 bg-dark-700 rounded-lg">
+                <div>
+                   <div className="font-medium text-white">Idle Resources</div>
+                   <div className="text-sm text-gray-400">{finops?.idle_resources} VMs running < 5% CPU</div>
+                </div>
+                <div className="text-xl font-bold text-red-400 hidden lg:block border border-red-500/30 bg-red-500/10 px-3 py-1 rounded">High</div>
+             </div>
+             <div className="flex justify-between items-center p-3 bg-dark-700 rounded-lg">
+                <div>
+                   <div className="font-medium text-white">Overprovisioned</div>
+                   <div className="text-sm text-gray-400">{finops?.overprovisioned_resources} instances oversized</div>
+                </div>
+                <div className="text-xl font-bold text-yellow-400 hidden lg:block border border-yellow-500/30 bg-yellow-500/10 px-3 py-1 rounded">Medium</div>
+             </div>
+             <div className="flex justify-between items-center p-3 bg-dark-700 rounded-lg">
+                <div>
+                   <div className="font-medium text-white">Cost Spikes</div>
+                   <div className="text-sm text-gray-400">{finops?.cost_spike_resources} sudden increases</div>
+                </div>
+                <div className="text-xl font-bold text-orange-400 hidden lg:block border border-orange-500/30 bg-orange-500/10 px-3 py-1 rounded">High</div>
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const PlaceholderPage = ({ title }: { title: string }) => (
+  <div className="flex items-center justify-center h-full min-h-[500px] glass-panel rounded-2xl">
+    <div className="text-center">
+      <h2 className="text-2xl font-bold text-gray-300 mb-2">{title}</h2>
+      <p className="text-gray-500">This detailed view is available in the full platform.</p>
+    </div>
+  </div>
+);
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Layout><Dashboard /></Layout>} />
+        <Route path="/finops" element={<Layout><PlaceholderPage title="FinOps Detailed View" /></Layout>} />
+        <Route path="/compliance" element={<Layout><PlaceholderPage title="Compliance Detailed View" /></Layout>} />
+        <Route path="/alerts" element={<Layout><PlaceholderPage title="Alert Management Center" /></Layout>} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
