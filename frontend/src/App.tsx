@@ -417,15 +417,31 @@ const LoginScreen = ({ onLogin }: { onLogin: () => void }) => {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    console.log(`[Auth] Attempting login for ${email} at ${API_BASE}/auth/login`);
+    
     axios.post(`${API_BASE}/auth/login`, { email, password })
       .then(res => {
+        console.log("[Auth] Login successful, storing token.");
         setAuthToken(res.data.access_token);
         localStorage.setItem('cloudguard_token', res.data.access_token);
         onLogin();
       })
       .catch(err => {
-        setError(err.response?.data?.detail || "Login failed due to network error");
-        console.error("Login failed:", err);
+        let msg = "Login failed";
+        if (!err.response) {
+          msg = "Network Error: Cannot reach API gateway at " + API_BASE;
+          console.error("[Auth] Network error - backend might be down or blocked by CORS.");
+        } else if (err.response.status === 401) {
+          msg = "Invalid email or password.";
+          console.warn("[Auth] 401 Unauthorized - check credentials.");
+        } else if (err.response.status === 500) {
+          msg = "Server Error (500): Something went wrong on the backend.";
+          console.error("[Auth] 500 Internal Server Error - check gateway logs.");
+        } else {
+          msg = err.response.data?.detail || `Error ${err.response.status}: ${err.response.statusText}`;
+        }
+        setError(msg);
+        console.error("[Auth] Login error details:", err);
       });
   };
 

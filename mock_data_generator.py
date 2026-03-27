@@ -6,8 +6,19 @@ import requests
 from datetime import datetime, timedelta
 
 GATEWAY_URL = "http://localhost:8000/api/v1"
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." + "eyJzdWIiOiJhZG1pbkBjbG91ZGd1YXJkLmlvIiwicm9sZSI6ImFkbWluIiwiZXhwIjo5OTk5OTk5OTk5fQ" + ".mocksignature"
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+HEADERS = {}
+
+def get_real_token():
+    try:
+        res = requests.post(f"{GATEWAY_URL}/auth/login", json={"email": "admin@cloudguard.io", "password": "admin123"})
+        res.raise_for_status()
+        token = res.json()["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+    except Exception as e:
+        print(f"Failed to fetch token: {e}")
+        return {}
+
+HEADERS = get_real_token()
 
 # Create dummy resources
 RESOURCES = [f"00000000-0000-0000-0000-{str(i).zfill(12)}" for i in range(1, 10)]

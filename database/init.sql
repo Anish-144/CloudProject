@@ -123,10 +123,11 @@ CREATE INDEX IF NOT EXISTS idx_resource_metrics_updated ON resource_metrics(last
 -- Password: admin123 (bcrypt hashed)
 -- ============================================
 INSERT INTO users (email, password_hash, role) VALUES
-    ('admin@cloudguard.io', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCsqROdR/2IirYSlOk5vjra', 'admin'),
-    ('finops@cloudguard.io', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCsqROdR/2IirYSlOk5vjra', 'finops_manager'),
-    ('compliance@cloudguard.io', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCsqROdR/2IirYSlOk5vjra', 'compliance_officer'),
-    ('viewer@cloudguard.io', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCsqROdR/2IirYSlOk5vjra', 'viewer')
+    ('admin@test.com', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin'),
+    ('admin@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin'),
+    ('finops@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'finops_manager'),
+    ('compliance@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'compliance_officer'),
+    ('viewer@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'viewer')
 ON CONFLICT (email) DO NOTHING;
 
 -- ============================================

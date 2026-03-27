@@ -23,16 +23,27 @@ auth_router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 @auth_router.post("/login", response_model=TokenResponse)
 async def login(request: LoginRequest, db: Database = Depends(lambda: None)):
     from main import database
+    logger.info(f"Login attempt for email: {request.email}")
+    
     row = await database.fetch_one(
         "SELECT id, email, password_hash, role FROM users WHERE email = :email",
         {"email": request.email}
     )
-    if not row or not verify_password(request.password, row["password_hash"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
-        )
+    
+    if not row:
+        logger.warning(f"User not found for email: {request.email}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
+    
+    logger.info(f"User '{request.email}' found in database. Verifying password...")
+    
+    is_valid = verify_password(request.password, row["password_hash"])
+    logger.info(f"Password match result: {is_valid}")
+    
+    if not is_valid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
+        
     token = create_access_token({"sub": row["email"], "role": row["role"], "user_id": str(row["id"])})
+    logger.info(f"Successful login for '{request.email}', returning token.")
     return TokenResponse(access_token=token, role=row["role"])
 
 

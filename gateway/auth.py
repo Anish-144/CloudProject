@@ -3,9 +3,9 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+import os
 from passlib.context import CryptContext
 from models import UserRole
-import os
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "fallback-secret-key")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
