@@ -4,10 +4,14 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from databases import Database
-from auth import get_current_user, verify_password, create_access_token, require_authenticated, require_finops, require_compliance
+from auth import (
+    get_current_user, verify_password, create_access_token,
+    require_authenticated, require_finops, require_compliance,
+    require_it_admin, require_cloud_admin
+)
 from models import (
     LoginRequest, TokenResponse, LogBatch, IngestResponse,
-    AlertOut, FinOpsSummary, ComplianceScore
+    AlertOut, FinOpsSummary, ComplianceScore, UserOut
 )
 import redis.asyncio as aioredis
 from datetime import datetime
@@ -24,27 +28,26 @@ auth_router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 async def login(request: LoginRequest, db: Database = Depends(lambda: None)):
     from main import database
     logger.info(f"Login attempt for email: {request.email}")
-    
+
     row = await database.fetch_one(
         "SELECT id, email, password_hash, role FROM users WHERE email = :email",
         {"email": request.email}
     )
-    
+
     if not row:
         logger.warning(f"User not found for email: {request.email}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
-    
-    logger.info(f"User '{request.email}' found in database. Verifying password...")
-    
+
+    logger.info(f"User '{request.email}' found. Verifying password...")
     is_valid = verify_password(request.password, row["password_hash"])
     logger.info(f"Password match result: {is_valid}")
-    
+
     if not is_valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
-        
+
     token = create_access_token({"sub": row["email"], "role": row["role"], "user_id": str(row["id"])})
-    logger.info(f"Successful login for '{request.email}', returning token.")
-    return TokenResponse(access_token=token, role=row["role"])
+    logger.info(f"Successful login for '{request.email}', role='{row['role']}'")
+    return TokenResponse(access_token=token, role=row["role"], email=row["email"])
 
 
 @auth_router.get("/me")
@@ -64,7 +67,6 @@ async def ingest_logs(batch: LogBatch, current_user: dict = Depends(require_auth
         entry = log.model_dump()
         entry["ingested_by"] = current_user["email"]
         entry["ingested_at"] = datetime.utcnow().isoformat()
-        # Push to Redis Stream
         pipe.xadd("cloud_logs", {"data": json.dumps(entry, default=str)})
     await pipe.execute()
     logger.info(f"Ingested {len(batch.logs)} logs from {current_user['email']}")
@@ -72,6 +74,7 @@ async def ingest_logs(batch: LogBatch, current_user: dict = Depends(require_auth
 
 
 # ── Alerts Router ─────────────────────────────────────────────
+# Accessible by ALL authenticated roles
 alerts_router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
 
 
@@ -114,7 +117,6 @@ async def alert_stream(current_user: dict = Depends(require_authenticated)):
                 if message:
                     yield f"data: {message['data'].decode()}\n\n"
                 else:
-                    # Keep-alive ping every second
                     yield ": ping\n\n"
                     await asyncio.sleep(1)
         except asyncio.CancelledError:
@@ -126,10 +128,7 @@ async def alert_stream(current_user: dict = Depends(require_authenticated)):
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        }
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -144,13 +143,13 @@ async def acknowledge_alert(alert_id: str, current_user: dict = Depends(require_
 
 
 # ── FinOps Router ─────────────────────────────────────────────
+# Protected: finops_manager, cloud_admin, admin
 finops_router = APIRouter(prefix="/api/v1/finops", tags=["FinOps"])
 
 
 @finops_router.get("/summary", response_model=FinOpsSummary)
-async def get_finops_summary(current_user: dict = Depends(require_authenticated)):
+async def get_finops_summary(current_user: dict = Depends(require_finops)):
     from main import database
-    # Aggregate alert data for finops summary
     row = await database.fetch_one("""
         SELECT
             COALESCE(SUM((details->>'estimated_savings')::float), 0) AS total_savings,
@@ -178,7 +177,7 @@ async def get_finops_summary(current_user: dict = Depends(require_authenticated)
 
 
 @finops_router.get("/cost-trends")
-async def get_cost_trends(current_user: dict = Depends(require_authenticated)):
+async def get_cost_trends(current_user: dict = Depends(require_finops)):
     from main import database
     rows = await database.fetch_all("""
         SELECT
@@ -194,7 +193,7 @@ async def get_cost_trends(current_user: dict = Depends(require_authenticated)):
 
 
 @finops_router.get("/top-savings")
-async def get_top_savings(current_user: dict = Depends(require_authenticated)):
+async def get_top_savings(current_user: dict = Depends(require_finops)):
     from main import database
     rows = await database.fetch_all("""
         SELECT id, message, details, severity, created_at
@@ -207,11 +206,12 @@ async def get_top_savings(current_user: dict = Depends(require_authenticated)):
 
 
 # ── Compliance Router ─────────────────────────────────────────
+# Protected: compliance_manager, compliance_officer (legacy), cloud_admin, admin
 compliance_router = APIRouter(prefix="/api/v1/compliance", tags=["Compliance"])
 
 
 @compliance_router.get("/score", response_model=ComplianceScore)
-async def get_compliance_score(current_user: dict = Depends(require_authenticated)):
+async def get_compliance_score(current_user: dict = Depends(require_compliance)):
     from main import database
     rules = await database.fetch_one("SELECT COUNT(*) AS total, SUM(weight) AS total_weight FROM compliance_rules WHERE active = true")
     violations = await database.fetch_all("""
@@ -260,7 +260,7 @@ async def get_violations(
     severity: str = None,
     status: str = "open",
     limit: int = 50,
-    current_user: dict = Depends(require_authenticated)
+    current_user: dict = Depends(require_compliance)
 ):
     from main import database
     query = """
@@ -286,7 +286,39 @@ async def get_violations(
 
 
 @compliance_router.get("/rules")
-async def get_rules(current_user: dict = Depends(require_authenticated)):
+async def get_rules(current_user: dict = Depends(require_compliance)):
     from main import database
     rows = await database.fetch_all("SELECT * FROM compliance_rules ORDER BY weight DESC")
     return [dict(r) for r in rows]
+
+
+# ── Admin Router ──────────────────────────────────────────────
+# Protected: cloud_admin, admin ONLY
+admin_router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
+
+
+@admin_router.get("/users", response_model=list[UserOut])
+async def list_users(current_user: dict = Depends(require_cloud_admin)):
+    from main import database
+    rows = await database.fetch_all(
+        "SELECT id, email, role, created_at FROM users ORDER BY created_at DESC"
+    )
+    return [dict(r) for r in rows]
+
+
+@admin_router.patch("/users/{user_id}/role")
+async def update_user_role(
+    user_id: str,
+    body: dict,
+    current_user: dict = Depends(require_cloud_admin)
+):
+    from main import database
+    new_role = body.get("role")
+    valid_roles = ["admin", "cloud_admin", "finops_manager", "compliance_manager", "it_admin", "viewer"]
+    if new_role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+    await database.execute(
+        "UPDATE users SET role = :role WHERE id = :id",
+        {"role": new_role, "id": user_id}
+    )
+    return {"message": f"User role updated to '{new_role}'"}

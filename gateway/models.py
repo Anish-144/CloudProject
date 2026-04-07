@@ -6,9 +6,12 @@ from enum import Enum
 
 
 class UserRole(str, Enum):
-    ADMIN = "admin"
+    ADMIN = "admin"                         # backward compat → treated as cloud_admin
+    CLOUD_ADMIN = "cloud_admin"
     FINOPS_MANAGER = "finops_manager"
-    COMPLIANCE_OFFICER = "compliance_officer"
+    COMPLIANCE_MANAGER = "compliance_manager"
+    COMPLIANCE_OFFICER = "compliance_officer"   # legacy alias
+    IT_ADMIN = "it_admin"
     VIEWER = "viewer"
 
 
@@ -35,6 +38,7 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     role: str
+    email: str
 
 
 # ── Log Ingestion Models ─────────────────────────────────────
@@ -46,7 +50,6 @@ class LogEntry(BaseModel):
     network_in_gb: float = Field(default=0, ge=0)
     network_out_gb: float = Field(default=0, ge=0)
     tags: Optional[dict] = {}
-    # Compliance-related metadata
     public_access: Optional[bool] = None
     encryption_at_rest: Optional[bool] = None
     mfa_enabled: Optional[bool] = None
@@ -111,3 +114,14 @@ class ComplianceScore(BaseModel):
     medium_violations: int
     low_violations: int
     by_category: dict[str, float]
+
+
+# ── Admin Models ─────────────────────────────────────────────
+class UserOut(BaseModel):
+    id: UUID
+    email: str
+    role: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

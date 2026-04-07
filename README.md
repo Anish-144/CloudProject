@@ -17,14 +17,18 @@ The easiest way to run the entire stack is using Docker Compose:
     ```bash
     docker compose up -d
     ```
-3.  **Access the application**:
-    - **Frontend**: [http://localhost:3000](http://localhost:3000)
-    - **API Gateway**: [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs)
-    - **Alert Service**: [http://localhost:8003](http://localhost:8003)
+### Service Access
+| Service | Link | Description |
+| :--- | :--- | :--- |
+| **Frontend** | [http://localhost:3000](http://localhost:3000) | Main Platform Dashboard (starts at Login) |
+| **API Docs** | [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs) | Backend Gateway Swagger Docs |
+| **Alert API** | [http://localhost:8003](http://localhost:8003) | Direct Alert Service Hub |
 
-### Default Credentials
-- **Email**: `admin@test.com`
-- **Password**: `admin123`
+### Default Credentials (pwd: admin123)
+- **Cloud Admin**: `admin@cloudguard.io`
+- **FinOps Manager**: `finops@cloudguard.io`
+- **Compliance Manager**: `compliance@cloudguard.io`
+- **IT Admin**: `itadmin@cloudguard.io`
 
 ## 🏗️ Architecture
 
@@ -40,13 +44,18 @@ The easiest way to run the entire stack is using Docker Compose:
 1.  **Develop Logic**: Add new routers in `gateway/routers.py` and logic in the respective engine folders.
 2.  **Test API**: Use the FastAPI swagger docs at `http://localhost:8000/api/v1/docs`.
 3.  **UI Updates**: Modify components in `frontend/src/App.tsx`.
-4.  **Rebuild**: If dependencies change, run `docker compose up --build`.
+4.  **Rebuild**: If any core logic or Dockerfiles change, run `docker compose up --build -d`.
 
-## 🩺 Health Check & Troubleshooting
+## 🩺 Troubleshooting
 
-- **Health Endpoint**: [http://localhost:8000/health](http://localhost:8000/health)
-- **View Logs**: `docker compose logs -f gateway`
-- **Common Fix**: If you see `ERR_EMPTY_RESPONSE`, ensure the `postgres` and `redis` containers are healthy (`docker compose ps`).
+- **Blank Screen / Login Not Appearing**: 
+    - **Check Debug Logs**: Open Browser Console (**F12**) and look for `[DEBUG]` messages. They track the routing and auth state.
+    - **Hard Refresh**: Press `Ctrl + Shift + R` to clear browser cache.
+    - **Clear State**: If you see unauthorized errors, open Console and type `localStorage.clear()` followed by a refresh.
+- **Connection Refused / Network Error**: 
+    - Verify Gateway is healthy: [http://localhost:8000/health](http://localhost:8000/health).
+    - Ensure Docker containers are running: `docker compose ps`.
+    - Restart stack: `docker compose down && docker compose up -d`.
 
 ---
 Developed for secure and cost-efficient cloud operations.

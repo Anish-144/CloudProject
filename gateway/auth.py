@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -13,6 +13,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+# Roles that are equivalent to cloud_admin (backward compat)
+CLOUD_ADMIN_ROLES = {UserRole.CLOUD_ADMIN.value, UserRole.ADMIN.value}
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -49,21 +52,58 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
 
 def require_roles(*roles: UserRole):
     """Role-based access control dependency factory."""
+    allowed = {r.value for r in roles}
+
     async def role_checker(current_user: dict = Depends(get_current_user)):
-        if current_user["role"] not in [r.value for r in roles]:
+        if current_user["role"] not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions. Required roles: {[r.value for r in roles]}"
+                detail=f"Insufficient permissions. Required roles: {list(allowed)}"
+            )
+        return current_user
+
+    return role_checker
+
+
+def require_role(allowed_roles: List[str]):
+    """Generic role dependency using plain string list."""
+    async def role_checker(current_user: dict = Depends(get_current_user)):
+        if current_user["role"] not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions. Required roles: {allowed_roles}"
             )
         return current_user
     return role_checker
 
 
-# Convenience role dependencies
-require_admin = require_roles(UserRole.ADMIN)
-require_finops = require_roles(UserRole.ADMIN, UserRole.FINOPS_MANAGER)
-require_compliance = require_roles(UserRole.ADMIN, UserRole.COMPLIANCE_OFFICER)
-require_authenticated = require_roles(
-    UserRole.ADMIN, UserRole.FINOPS_MANAGER,
-    UserRole.COMPLIANCE_OFFICER, UserRole.VIEWER
+# ── Convenience Role Dependencies ────────────────────────────
+# cloud_admin and legacy admin can access everything
+require_cloud_admin = require_roles(UserRole.CLOUD_ADMIN, UserRole.ADMIN)
+
+# FinOps routes: finops_manager + cloud admins
+require_finops = require_roles(
+    UserRole.FINOPS_MANAGER, UserRole.CLOUD_ADMIN, UserRole.ADMIN
 )
+
+# Compliance routes: compliance_manager + cloud admins
+require_compliance = require_roles(
+    UserRole.COMPLIANCE_MANAGER, UserRole.COMPLIANCE_OFFICER,
+    UserRole.CLOUD_ADMIN, UserRole.ADMIN
+)
+
+# IT Admin routes: it_admin + cloud admins
+require_it_admin = require_roles(
+    UserRole.IT_ADMIN, UserRole.CLOUD_ADMIN, UserRole.ADMIN
+)
+
+# Any authenticated user (alerts, ingest)
+require_authenticated = require_roles(
+    UserRole.CLOUD_ADMIN, UserRole.ADMIN,
+    UserRole.FINOPS_MANAGER,
+    UserRole.COMPLIANCE_MANAGER, UserRole.COMPLIANCE_OFFICER,
+    UserRole.IT_ADMIN, UserRole.VIEWER
+)
+
+# Legacy alias
+require_admin = require_cloud_admin

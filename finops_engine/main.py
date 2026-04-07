@@ -7,6 +7,8 @@ from typing import Optional
 from databases import Database
 import redis.asyncio as aioredis
 import httpx
+from fastapi import FastAPI
+import uvicorn
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -224,8 +226,26 @@ async def process_log(db: Database, client: httpx.AsyncClient, log: dict):
             await publish_alert(client, resource_id, finding)
 
 
+# ─── Health check server ──────────────────────────────────────
+health_app = FastAPI()
+
+
+@health_app.get("/health")
+async def health():
+    return {"status": "ok", "service": "finops_engine"}
+
+
+async def run_health_server():
+    config = uvicorn.Config(health_app, host="0.0.0.0", port=8001, log_level="error")
+    server = uvicorn.Server(config)
+    await server.serve()
+
+
 async def main():
     logger.info("FinOps Engine starting...")
+    # Start health check server in background
+    asyncio.create_task(run_health_server())
+
     db = Database(DATABASE_URL)
     await db.connect()
     redis = aioredis.from_url(REDIS_URL, decode_responses=True)

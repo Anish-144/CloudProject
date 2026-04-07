@@ -11,9 +11,45 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'finops_manager', 'compliance_officer', 'viewer')),
+    role VARCHAR(50) NOT NULL DEFAULT 'viewer',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ============================================
+-- ROLE MIGRATION (idempotent)
+-- Updates CHECK constraint to include new roles, migrates legacy roles
+-- ============================================
+DO $$
+BEGIN
+    -- Drop old check constraint (PostgreSQL auto-names it tablename_columnname_check)
+    BEGIN
+        ALTER TABLE users DROP CONSTRAINT users_role_check;
+    EXCEPTION WHEN undefined_object THEN
+        NULL;
+    END;
+
+    -- Add updated constraint with all valid roles
+    BEGIN
+        ALTER TABLE users ADD CONSTRAINT users_role_check
+            CHECK (role IN (
+                'admin',
+                'cloud_admin',
+                'finops_manager',
+                'compliance_manager',
+                'compliance_officer',
+                'it_admin',
+                'viewer'
+            ));
+    EXCEPTION WHEN duplicate_object THEN
+        NULL;
+    END;
+
+    -- Migrate compliance_officer → compliance_manager
+    UPDATE users SET role = 'compliance_manager' WHERE role = 'compliance_officer';
+
+EXCEPTION WHEN others THEN
+    RAISE NOTICE 'Role migration skipped: %', SQLERRM;
+END $$;
 
 -- ============================================
 -- RESOURCES TABLE
@@ -119,16 +155,19 @@ CREATE TABLE IF NOT EXISTS resource_metrics (
 CREATE INDEX IF NOT EXISTS idx_resource_metrics_updated ON resource_metrics(last_updated);
 
 -- ============================================
--- SEED: DEFAULT ADMIN USER
--- Password: admin123 (bcrypt hashed)
+-- SEED: ALL ROLE USERS
+-- Password for all: admin123 (bcrypt hashed)
 -- ============================================
 INSERT INTO users (email, password_hash, role) VALUES
-    ('admin@test.com', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin'),
-    ('admin@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin'),
-    ('finops@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'finops_manager'),
-    ('compliance@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'compliance_officer'),
-    ('viewer@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'viewer')
-ON CONFLICT (email) DO NOTHING;
+    ('admin@test.com',           '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin'),
+    ('admin@cloudguard.io',      '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'cloud_admin'),
+    ('finops@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'finops_manager'),
+    ('compliance@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'compliance_manager'),
+    ('itadmin@cloudguard.io',    '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'it_admin'),
+    ('viewer@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'viewer')
+ON CONFLICT (email) DO UPDATE SET
+    role = EXCLUDED.role,
+    password_hash = EXCLUDED.password_hash;
 
 -- ============================================
 -- SEED: DEFAULT COMPLIANCE RULES
