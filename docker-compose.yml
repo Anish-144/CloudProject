@@ -27,26 +27,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  redis:
-    image: redis:7-alpine
-    container_name: cloudguard_redis
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   gateway:
     build:
       context: ./gateway
@@ -60,8 +40,6 @@ services:
       - "8000:8000"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     volumes:
       - ./gateway:/app
@@ -88,8 +66,6 @@ services:
     env_file: .env
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       gateway:
         condition: service_healthy
@@ -118,8 +94,6 @@ services:
     env_file: .env
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       gateway:
         condition: service_healthy
@@ -151,8 +125,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     volumes:
       - ./alert_service:/app
     healthcheck:
@@ -160,6 +132,29 @@ services:
       interval: 15s
       timeout: 10s
       retries: 3
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cloud_collector:
+    build:
+      context: ./cloud_collector
+      dockerfile: Dockerfile
+    container_name: cloudguard_collector
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    volumes:
+      - ./cloud_collector:/app
     restart: always
     logging:
       driver: "json-file"

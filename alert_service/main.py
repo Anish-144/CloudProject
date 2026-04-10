@@ -13,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from databases import Database
-import redis.asyncio as aioredis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -22,10 +21,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 
 database = Database(DATABASE_URL)
-redis_client: aioredis.Redis = None
 
 # ─── Priority Scoring ─────────────────────────────────────────
 SEVERITY_SCORE = {"low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -46,6 +43,14 @@ def build_dedupe_key(alert_type: str, source_id: str, message: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
+# ─── Role Routing Map ─────────────────────────────────────────
+ALERT_ROLE_ROUTING = {
+    "finops": ["finops_manager", "it_admin", "cloud_admin"],
+    "compliance": ["compliance_manager", "it_admin", "cloud_admin"],
+    "combined": ["finops_manager", "compliance_manager", "it_admin", "cloud_admin"],
+}
+
+
 # ─── Models ───────────────────────────────────────────────────
 class AlertPayload(BaseModel):
     type: str
@@ -53,19 +58,18 @@ class AlertPayload(BaseModel):
     severity: str
     message: str
     details: Optional[dict] = {}
+    target_roles: Optional[list[str]] = None
+    iam_user: Optional[str] = None
 
 
 # ─── App Lifespan ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global redis_client
     logger.info("Alert Service starting...")
     await database.connect()
-    redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
-    logger.info("Connected to DB and Redis.")
+    logger.info("Connected to DB.")
     yield
     await database.disconnect()
-    await redis_client.close()
 
 app = FastAPI(
     title="CloudGuard Alert Service",
@@ -101,9 +105,12 @@ async def receive_alert(payload: AlertPayload):
 
     priority = calculate_priority(payload.severity, payload.type, now)
 
+    # Auto-compute target_roles from alert type if not explicitly set
+    target_roles = payload.target_roles or ALERT_ROLE_ROUTING.get(payload.type, ["cloud_admin"])
+
     alert_id = await database.execute("""
-        INSERT INTO alerts (type, source_id, severity, message, details, status, priority, dedupe_key, created_at)
-        VALUES (:type, :source_id, :severity, :message, :details, 'active', :priority, :dedupe_key, :created_at)
+        INSERT INTO alerts (type, source_id, severity, message, details, status, priority, dedupe_key, target_roles, iam_user, created_at)
+        VALUES (:type, :source_id, :severity, :message, :details, 'active', :priority, :dedupe_key, :target_roles, :iam_user, :created_at)
         RETURNING id
     """, {
         "type": payload.type,
@@ -113,19 +120,10 @@ async def receive_alert(payload: AlertPayload):
         "details": json.dumps(payload.details or {}),
         "priority": priority,
         "dedupe_key": dedupe_key,
+        "target_roles": target_roles,
+        "iam_user": payload.iam_user,
         "created_at": now,
     })
-
-    # Publish to Redis pub/sub for SSE clients
-    alert_notification = json.dumps({
-        "id": str(alert_id),
-        "type": payload.type,
-        "severity": payload.severity,
-        "message": payload.message,
-        "priority": priority,
-        "created_at": now.isoformat(),
-    })
-    await redis_client.publish("alert_notifications", alert_notification)
 
     logger.info(f"Stored alert [{payload.severity}] {payload.message[:60]} priority={priority}")
     return {"status": "created", "alert_id": str(alert_id), "priority": priority}
@@ -156,6 +154,6 @@ async def simulate_remediation(alert_id: str):
         "message": f"[AutoRemediation] Alert {alert_id} automatically resolved.",
         "timestamp": datetime.utcnow().isoformat(),
     }
-    await redis_client.publish("alert_notifications", json.dumps(remediation_event))
+    # Notice: redis_client.publish has been removed
     logger.info(f"Remediation simulated for alert {alert_id}")
     return remediation_event

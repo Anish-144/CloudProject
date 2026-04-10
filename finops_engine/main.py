@@ -5,7 +5,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from databases import Database
-import redis.asyncio as aioredis
 import httpx
 from fastapi import FastAPI
 import uvicorn
@@ -17,11 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 ALERT_SERVICE_URL = os.getenv("ALERT_SERVICE_URL", "http://alert_service:8003")
-STREAM_KEY = "cloud_logs"
-CONSUMER_GROUP = "finops_group"
-CONSUMER_NAME = "finops_engine_1"
 
 
 # ─── FinOps Detection Rules ───────────────────────────────────
@@ -192,13 +187,14 @@ async def store_log(db: Database, log: dict, resource_id: str):
 
 # ─── Alert Publisher ──────────────────────────────────────────
 
-async def publish_alert(client: httpx.AsyncClient, resource_id: str, finding: dict):
+async def publish_alert(client: httpx.AsyncClient, resource_id: str, finding: dict, iam_user: str = None):
     payload = {
         "type": "finops",
         "source_id": resource_id,
         "severity": finding["severity"],
         "message": f"[FinOps] {finding['waste_type'].replace('_', ' ').title()} detected on resource {resource_id}",
         "details": finding,
+        "iam_user": iam_user,
     }
     try:
         resp = await client.post(f"{ALERT_SERVICE_URL}/internal/alerts", json=payload, timeout=5)
@@ -208,6 +204,90 @@ async def publish_alert(client: httpx.AsyncClient, resource_id: str, finding: di
         logger.error(f"Failed to publish alert: {e}")
 
 
+# ─── User Activity Normalization ──────────────────────────────
+
+async def normalize_user_activity(db: Database, log: dict):
+    """Extract IAM user activity from a log entry and store it normalized."""
+    iam_user = log.get("ingested_by") or log.get("iam_user") or log.get("user")
+    if not iam_user:
+        return None
+
+    service = log.get("service", "unknown")
+    action = log.get("action", "resource_usage")
+    resource_id = log.get("resource_id", "")
+    event_time = log.get("timestamp") or log.get("ingested_at") or datetime.utcnow().isoformat()
+
+    if isinstance(event_time, str):
+        try:
+            event_time = datetime.fromisoformat(event_time)
+        except Exception:
+            event_time = datetime.utcnow()
+
+    try:
+        await db.execute("""
+            INSERT INTO user_activity_logs (iam_user, service, action, resource_id, source_ip, region, details, event_time)
+            VALUES (:iam_user, :service, :action, :resource_id, :source_ip, :region, :details, :event_time)
+            ON CONFLICT (iam_user, service, action, resource_id, event_time) DO NOTHING
+        """, {
+            "iam_user": iam_user,
+            "service": service,
+            "action": action,
+            "resource_id": resource_id,
+            "source_ip": log.get("source_ip"),
+            "region": log.get("region", "us-east-1"),
+            "details": json.dumps({k: v for k, v in log.items() if k in [
+                "cpu_usage", "memory_usage", "cost", "daily_cost"
+            ]}),
+            "event_time": event_time,
+        })
+    except Exception as e:
+        logger.error(f"Failed to normalize user activity for {iam_user}: {e}")
+
+    return iam_user
+
+
+# ─── Per-User Threshold Checking ──────────────────────────────
+
+async def check_user_thresholds(db: Database, client: httpx.AsyncClient, iam_user: str, log: dict):
+    """Check budget and cost_spike thresholds for a specific IAM user."""
+
+    # Calculate current user total cost (last 30 days)
+    cost_row = await db.fetch_one("""
+        SELECT COALESCE(SUM(cost), 0) AS total_cost
+        FROM usage_logs ul
+        JOIN resources r ON ul.resource_id = r.id
+        WHERE r.owner_id IS NOT NULL
+          AND ul.timestamp > NOW() - INTERVAL '30 days'
+    """)
+    user_total_cost = float(cost_row["total_cost"] or 0)
+
+    # Fetch active thresholds (user-specific first, then global)
+    thresholds = await db.fetch_all("""
+        SELECT * FROM thresholds
+        WHERE active = true AND (iam_user = :iam_user OR iam_user IS NULL)
+        ORDER BY iam_user NULLS LAST
+    """, {"iam_user": iam_user})
+
+    for threshold in thresholds:
+        t_type = threshold["type"]
+        t_value = float(threshold["value"])
+
+        if t_type == "budget" and user_total_cost > t_value:
+            finding = {
+                "waste_type": "budget_exceeded",
+                "estimated_savings": round(user_total_cost - t_value, 2),
+                "severity": "critical" if user_total_cost > t_value * 1.5 else "high",
+                "details": {
+                    "iam_user": iam_user,
+                    "current_cost": round(user_total_cost, 2),
+                    "budget_limit": t_value,
+                    "overage_pct": round(((user_total_cost - t_value) / t_value) * 100, 1),
+                }
+            }
+            await publish_alert(client, log.get("resource_id", ""), finding, iam_user=iam_user)
+            logger.info(f"Budget threshold exceeded for user {iam_user}: ${user_total_cost:.2f} > ${t_value:.2f}")
+
+
 # ─── Main Consumer Loop ───────────────────────────────────────
 
 async def process_log(db: Database, client: httpx.AsyncClient, log: dict):
@@ -215,15 +295,24 @@ async def process_log(db: Database, client: httpx.AsyncClient, log: dict):
     if not resource_id:
         return
 
+    # Step 1: Normalize IAM user activity
+    iam_user = await normalize_user_activity(db, log)
+
+    # Step 2: Existing resource + usage log processing
     await get_or_create_resource(db, resource_id)
     await store_log(db, log, resource_id)
     metrics = await get_resource_metrics(db, resource_id)
 
+    # Step 3: Existing detection rules
     detectors = [detect_idle_resource, detect_overprovisioned, detect_cost_spike]
     for detector in detectors:
         finding = detector(log, metrics)
         if finding:
-            await publish_alert(client, resource_id, finding)
+            await publish_alert(client, resource_id, finding, iam_user=iam_user)
+
+    # Step 4: Per-user threshold checks
+    if iam_user:
+        await check_user_thresholds(db, client, iam_user, log)
 
 
 # ─── Health check server ──────────────────────────────────────
@@ -248,33 +337,29 @@ async def main():
 
     db = Database(DATABASE_URL)
     await db.connect()
-    redis = aioredis.from_url(REDIS_URL, decode_responses=True)
-
-    # Create consumer group (ignore if already exists)
-    try:
-        await redis.xgroup_create(STREAM_KEY, CONSUMER_GROUP, id="0", mkstream=True)
-    except Exception:
-        pass
 
     async with httpx.AsyncClient() as client:
-        logger.info(f"Listening to Redis Stream '{STREAM_KEY}'...")
+        logger.info("Polling incoming_logs in PostgreSQL...")
         while True:
             try:
-                messages = await redis.xreadgroup(
-                    CONSUMER_GROUP, CONSUMER_NAME,
-                    {STREAM_KEY: ">"},
-                    count=10, block=2000
-                )
-                for stream, entries in messages:
-                    for entry_id, fields in entries:
-                        try:
-                            log = json.loads(fields["data"])
-                            await process_log(db, client, log)
-                            await redis.xack(STREAM_KEY, CONSUMER_GROUP, entry_id)
-                        except Exception as e:
-                            logger.error(f"Error processing log {entry_id}: {e}")
+                rows = await db.fetch_all("SELECT id, log_data FROM incoming_logs WHERE processed_finops = false LIMIT 100")
+                if not rows:
+                    await asyncio.sleep(2)
+                    continue
+                
+                for row in rows:
+                    try:
+                        if isinstance(row["log_data"], str):
+                            log = json.loads(row["log_data"])
+                        else:
+                            log = row["log_data"]
+                            
+                        await process_log(db, client, log)
+                        await db.execute("UPDATE incoming_logs SET processed_finops = true WHERE id = :id", {"id": row["id"]})
+                    except Exception as e:
+                        logger.error(f"Error processing log {row['id']}: {e}")
             except Exception as e:
-                logger.error(f"Stream error: {e}")
+                logger.error(f"PostgreSQL polling error: {e}")
                 await asyncio.sleep(3)
 
 

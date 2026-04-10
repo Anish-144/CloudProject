@@ -58,6 +58,10 @@ class LogEntry(BaseModel):
     in_private_subnet: Optional[bool] = None
     daily_cost: Optional[float] = None
     timestamp: Optional[datetime] = None
+    # IAM user fields
+    user: Optional[str] = None
+    service: Optional[str] = None
+    action: Optional[str] = None
 
 
 class LogBatch(BaseModel):
@@ -73,12 +77,14 @@ class IngestResponse(BaseModel):
 class AlertOut(BaseModel):
     id: UUID
     type: str
-    source_id: Optional[UUID]
+    source_id: Optional[UUID] = None
     severity: str
     message: str
-    details: Optional[dict]
+    details: Optional[dict] = None
     status: str
     priority: float
+    target_roles: Optional[list[str]] = []
+    iam_user: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -125,3 +131,50 @@ class UserOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── User Activity Models ─────────────────────────────────────
+class UserActivityOut(BaseModel):
+    id: UUID
+    iam_user: str
+    service: str
+    action: str
+    resource_id: Optional[str] = None
+    source_ip: Optional[str] = None
+    region: Optional[str] = None
+    details: Optional[dict] = None
+    event_time: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ── Threshold Models ─────────────────────────────────────────
+class ThresholdCreate(BaseModel):
+    type: str = Field(..., pattern="^(budget|cost_spike|cpu_usage|custom)$")
+    metric: str = "total_cost"
+    value: float = Field(..., ge=0)
+    iam_user: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ThresholdOut(BaseModel):
+    id: UUID
+    type: str
+    metric: str
+    value: float
+    iam_user: Optional[str] = None
+    description: Optional[str] = None
+    active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ── Per-User Cost Model ──────────────────────────────────────
+class UserCostOut(BaseModel):
+    iam_user: str
+    total_cost_30d: float
+    resource_count: int
+    avg_daily_cost: float

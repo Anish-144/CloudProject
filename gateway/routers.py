@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 from databases import Database
 from auth import (
@@ -11,11 +11,10 @@ from auth import (
 )
 from models import (
     LoginRequest, TokenResponse, LogBatch, IngestResponse,
-    AlertOut, FinOpsSummary, ComplianceScore, UserOut
+    AlertOut, FinOpsSummary, ComplianceScore, UserOut,
+    UserActivityOut, ThresholdCreate, ThresholdOut, UserCostOut
 )
-import redis.asyncio as aioredis
 from datetime import datetime
-from typing import AsyncGenerator
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -61,75 +60,73 @@ ingest_router = APIRouter(prefix="/api/v1/ingest", tags=["Log Ingestion"])
 
 @ingest_router.post("/logs", response_model=IngestResponse)
 async def ingest_logs(batch: LogBatch, current_user: dict = Depends(require_authenticated)):
-    from main import redis_client
-    pipe = redis_client.pipeline()
+    from main import database
+    query = """
+        INSERT INTO incoming_logs (log_data) VALUES (:log_data)
+    """
+    values = []
     for log in batch.logs:
         entry = log.model_dump()
         entry["ingested_by"] = current_user["email"]
         entry["ingested_at"] = datetime.utcnow().isoformat()
-        pipe.xadd("cloud_logs", {"data": json.dumps(entry, default=str)})
-    await pipe.execute()
+        values.append({"log_data": json.dumps(entry, default=str)})
+
+    if values:
+        await database.execute_many(query=query, values=values)
     logger.info(f"Ingested {len(batch.logs)} logs from {current_user['email']}")
     return IngestResponse(accepted=len(batch.logs), message="Logs queued for processing")
 
 
 # ── Alerts Router ─────────────────────────────────────────────
-# Accessible by ALL authenticated roles
+# Role-based: users only see alerts targeted at their role
 alerts_router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
+
+# Maps platform roles to what alert target_roles they can see
+ROLE_ALERT_ACCESS = {
+    "admin": None,              # sees all
+    "cloud_admin": None,        # sees all
+    "finops_manager": "finops_manager",
+    "compliance_manager": "compliance_manager",
+    "it_admin": "it_admin",
+    "viewer": "viewer",
+}
 
 
 @alerts_router.get("", response_model=list[AlertOut])
 async def get_alerts(
     severity: str = None,
-    status: str = None,
+    alert_status: str = None,
+    alert_type: str = None,
     limit: int = 50,
     offset: int = 0,
     current_user: dict = Depends(require_authenticated)
 ):
     from main import database
+    user_role = current_user["role"]
+    role_filter = ROLE_ALERT_ACCESS.get(user_role)
+
     query = "SELECT * FROM alerts WHERE 1=1"
     params = {}
+
+    # Role-based filtering: non-admin users only see alerts targeted at their role
+    if role_filter is not None:
+        query += " AND :user_role = ANY(target_roles)"
+        params["user_role"] = role_filter
+
     if severity:
         query += " AND severity = :severity"
         params["severity"] = severity
-    if status:
+    if alert_status:
         query += " AND status = :status"
-        params["status"] = status
+        params["status"] = alert_status
+    if alert_type:
+        query += " AND type = :type"
+        params["type"] = alert_type
     query += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
     params["limit"] = limit
     params["offset"] = offset
     rows = await database.fetch_all(query, params)
     return [dict(r) for r in rows]
-
-
-@alerts_router.get("/stream")
-async def alert_stream(current_user: dict = Depends(require_authenticated)):
-    """Server-Sent Events endpoint for real-time alerts."""
-    from main import redis_client
-
-    async def event_generator() -> AsyncGenerator[str, None]:
-        pubsub = redis_client.pubsub()
-        await pubsub.subscribe("alert_notifications")
-        try:
-            yield "data: {\"type\": \"connected\", \"message\": \"CloudGuard SSE stream active\"}\n\n"
-            while True:
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                if message:
-                    yield f"data: {message['data'].decode()}\n\n"
-                else:
-                    yield ": ping\n\n"
-                    await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await pubsub.unsubscribe("alert_notifications")
-            await pubsub.close()
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
 
 
 @alerts_router.patch("/{alert_id}/acknowledge")
@@ -203,6 +200,127 @@ async def get_top_savings(current_user: dict = Depends(require_finops)):
         LIMIT 10
     """)
     return [dict(r) for r in rows]
+
+
+@finops_router.get("/user-costs", response_model=list[UserCostOut])
+async def get_user_costs(current_user: dict = Depends(require_finops)):
+    """Per-user cost breakdown computed from user_activity_logs + usage_logs."""
+    from main import database
+    rows = await database.fetch_all("""
+        SELECT
+            ual.iam_user,
+            COALESCE(SUM(ul.cost), 0) AS total_cost_30d,
+            COUNT(DISTINCT ul.resource_id) AS resource_count,
+            COALESCE(AVG(ul.cost), 0) AS avg_daily_cost
+        FROM user_activity_logs ual
+        LEFT JOIN usage_logs ul
+            ON ul.resource_id::text = ual.resource_id
+            AND ul.timestamp > NOW() - INTERVAL '30 days'
+        GROUP BY ual.iam_user
+        ORDER BY total_cost_30d DESC
+    """)
+    return [
+        UserCostOut(
+            iam_user=r["iam_user"],
+            total_cost_30d=round(float(r["total_cost_30d"]), 2),
+            resource_count=int(r["resource_count"]),
+            avg_daily_cost=round(float(r["avg_daily_cost"]), 4),
+        )
+        for r in rows
+    ]
+
+
+# ── User Activity Router ─────────────────────────────────────
+# Accessible by IT Admin, Cloud Admin, Admin
+activity_router = APIRouter(prefix="/api/v1/users", tags=["User Activity"])
+
+
+@activity_router.get("/activity", response_model=list[UserActivityOut])
+async def get_user_activity(
+    iam_user: str = None,
+    service: str = None,
+    limit: int = Query(default=100, le=500),
+    offset: int = 0,
+    current_user: dict = Depends(require_it_admin)
+):
+    """Return IAM user activity logs, filterable by user and service."""
+    from main import database
+    query = "SELECT * FROM user_activity_logs WHERE 1=1"
+    params = {}
+    if iam_user:
+        query += " AND iam_user = :iam_user"
+        params["iam_user"] = iam_user
+    if service:
+        query += " AND service = :service"
+        params["service"] = service
+    query += " ORDER BY event_time DESC LIMIT :limit OFFSET :offset"
+    params["limit"] = limit
+    params["offset"] = offset
+    rows = await database.fetch_all(query, params)
+    return [dict(r) for r in rows]
+
+
+@activity_router.get("/activity/summary")
+async def get_user_activity_summary(
+    current_user: dict = Depends(require_it_admin)
+):
+    """Return activity counts grouped by IAM user."""
+    from main import database
+    rows = await database.fetch_all("""
+        SELECT
+            iam_user,
+            COUNT(*) AS total_events,
+            COUNT(DISTINCT service) AS services_used,
+            COUNT(DISTINCT resource_id) AS resources_touched,
+            MAX(event_time) AS last_activity
+        FROM user_activity_logs
+        GROUP BY iam_user
+        ORDER BY total_events DESC
+    """)
+    return [dict(r) for r in rows]
+
+
+# ── Threshold Router ─────────────────────────────────────────
+# IT Admin manages thresholds
+threshold_router = APIRouter(prefix="/api/v1/thresholds", tags=["Thresholds"])
+
+
+@threshold_router.get("", response_model=list[ThresholdOut])
+async def list_thresholds(current_user: dict = Depends(require_it_admin)):
+    from main import database
+    rows = await database.fetch_all(
+        "SELECT * FROM thresholds WHERE active = true ORDER BY created_at DESC"
+    )
+    return [dict(r) for r in rows]
+
+
+@threshold_router.post("", response_model=ThresholdOut)
+async def create_threshold(body: ThresholdCreate, current_user: dict = Depends(require_it_admin)):
+    from main import database
+    row_id = await database.execute("""
+        INSERT INTO thresholds (type, metric, value, iam_user, description, created_by)
+        VALUES (:type, :metric, :value, :iam_user, :description, :created_by)
+        RETURNING id
+    """, {
+        "type": body.type,
+        "metric": body.metric,
+        "value": body.value,
+        "iam_user": body.iam_user,
+        "description": body.description,
+        "created_by": current_user.get("user_id"),
+    })
+    row = await database.fetch_one("SELECT * FROM thresholds WHERE id = :id", {"id": row_id})
+    return dict(row)
+
+
+@threshold_router.delete("/{threshold_id}")
+async def deactivate_threshold(threshold_id: str, current_user: dict = Depends(require_it_admin)):
+    from main import database
+    await database.execute(
+        "UPDATE thresholds SET active = false WHERE id = :id",
+        {"id": threshold_id}
+    )
+    return {"message": "Threshold deactivated"}
 
 
 # ── Compliance Router ─────────────────────────────────────────
@@ -322,3 +440,4 @@ async def update_user_role(
         {"role": new_role, "id": user_id}
     )
     return {"message": f"User role updated to '{new_role}'"}
+
