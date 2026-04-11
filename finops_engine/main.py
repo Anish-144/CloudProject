@@ -8,7 +8,7 @@ from databases import Database
 import httpx
 from fastapi import FastAPI
 import uvicorn
-import redis
+import redis.asyncio as redis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -24,9 +24,10 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 
 def detect_idle_resource(log: dict, metrics: dict) -> Optional[dict]:
     """Detect resources with CPU < 5% average over 7 days."""
-    avg_cpu_7d = metrics.get("avg_cpu_7d", 100)
+    avg_cpu_7d = metrics.get("avg_cpu_7d") if metrics.get("avg_cpu_7d") is not None else 100
     if avg_cpu_7d < 5:
-        estimated_savings = metrics.get("avg_cost_30d", 0) * 0.8  # 80% savings potential
+        avg_cost_30d = metrics.get("avg_cost_30d") or 0
+        estimated_savings = avg_cost_30d * 0.8  # 80% savings potential
         return {
             "waste_type": "idle_resource",
             "estimated_savings": round(estimated_savings, 2),
@@ -34,7 +35,7 @@ def detect_idle_resource(log: dict, metrics: dict) -> Optional[dict]:
             "details": {
                 "avg_cpu_7d": round(avg_cpu_7d, 2),
                 "threshold_cpu": 5,
-                "avg_monthly_cost": round(metrics.get("avg_cost_30d", 0) * 30, 2),
+                "avg_monthly_cost": round(avg_cost_30d * 30, 2),
             }
         }
     return None
@@ -42,12 +43,12 @@ def detect_idle_resource(log: dict, metrics: dict) -> Optional[dict]:
 
 def detect_overprovisioned(log: dict, metrics: dict) -> Optional[dict]:
     """Detect resources where allocated > 2x average usage."""
-    cpu_usage = log.get("cpu_usage", 50)
-    memory_usage = log.get("memory_usage", 50)
-    avg_cpu = metrics.get("avg_cpu_30d", 50)
+    cpu_usage = log.get("cpu_usage") or 0
+    avg_cpu = metrics.get("avg_cpu_30d") or 50
+    avg_cost_30d = metrics.get("avg_cost_30d") or 0
 
     if avg_cpu > 0 and cpu_usage > (avg_cpu * 2):
-        estimated_savings = metrics.get("avg_cost_30d", 0) * 0.3  # 30% savings
+        estimated_savings = avg_cost_30d * 0.3  # 30% savings
         return {
             "waste_type": "overprovisioned",
             "estimated_savings": round(estimated_savings, 2),
@@ -64,10 +65,10 @@ def detect_overprovisioned(log: dict, metrics: dict) -> Optional[dict]:
 
 def detect_cost_spike(log: dict, metrics: dict) -> Optional[dict]:
     """Detect >20% cost increase month-over-month."""
-    avg_cost_30d = metrics.get("avg_cost_30d", 0)
-    avg_cost_prev_30d = metrics.get("avg_cost_prev_30d", avg_cost_30d)
+    avg_cost_30d = metrics.get("avg_cost_30d") or 0
+    avg_cost_prev_30d = metrics.get("avg_cost_prev_30d") or avg_cost_30d
 
-    if avg_cost_prev_30d > 0:
+    if avg_cost_prev_30d and avg_cost_prev_30d > 0:
         change_pct = ((avg_cost_30d - avg_cost_prev_30d) / avg_cost_prev_30d) * 100
         if change_pct > 20:
             estimated_savings = (avg_cost_30d - avg_cost_prev_30d) * 30
@@ -188,7 +189,7 @@ async def store_log(db: Database, log: dict, resource_id: str):
 
 # ─── Alert Publisher ──────────────────────────────────────────
 
-async def publish_alert(redis_client: redis.Redis, resource_id: str, finding: dict, iam_user: str = None):
+async def publish_alert(redis_client, resource_id: str, finding: dict, iam_user: str = None):
     payload = {
         "severity": finding["severity"].upper(),
         "type": "FINOPS",
@@ -199,7 +200,7 @@ async def publish_alert(redis_client: redis.Redis, resource_id: str, finding: di
         "iam_user": iam_user,
     }
     try:
-        redis_client.publish("alerts_stream", json.dumps(payload))
+        await redis_client.publish("alerts_stream", json.dumps(payload))
         logger.info(f"Alert published: {finding['waste_type']} for {resource_id}")
     except Exception as e:
         logger.error(f"Failed to publish alert: {e}")
@@ -249,7 +250,7 @@ async def normalize_user_activity(db: Database, log: dict):
 
 # ─── Per-User Threshold Checking ──────────────────────────────
 
-async def check_user_thresholds(db: Database, redis_client: redis.Redis, iam_user: str, log: dict):
+async def check_user_thresholds(db: Database, redis_client, iam_user: str, log: dict):
     """Check budget and cost_spike thresholds for a specific IAM user."""
 
     # Calculate current user total cost (last 30 days)
@@ -339,7 +340,7 @@ async def main():
     db = Database(DATABASE_URL)
     await db.connect()
 
-    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
     logger.info("Polling incoming_logs in PostgreSQL...")
     while True:

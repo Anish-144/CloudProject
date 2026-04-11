@@ -9,7 +9,7 @@ from databases import Database
 import httpx
 from fastapi import FastAPI
 import uvicorn
-import redis
+import redis.asyncio as redis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -134,7 +134,7 @@ async def record_violation(db: Database, resource_id: str, rule: dict, log: dict
     return severity
 
 
-async def publish_alert(redis_client: redis.Redis, resource_id: str, rule: dict, severity: str, score: float, iam_user: str = None):
+async def publish_alert(redis_client, resource_id: str, rule: dict, severity: str, score: float, iam_user: str = None):
     payload = {
         "severity": severity.upper(),
         "type": "COMPLIANCE",
@@ -151,7 +151,7 @@ async def publish_alert(redis_client: redis.Redis, resource_id: str, rule: dict,
         "iam_user": iam_user,
     }
     try:
-        redis_client.publish("alerts_stream", json.dumps(payload))
+        await redis_client.publish("alerts_stream", json.dumps(payload))
     except Exception as e:
         logger.error(f"Failed to publish compliance alert: {e}")
 
@@ -208,7 +208,7 @@ async def main():
     db = Database(DATABASE_URL)
     await db.connect()
 
-    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
     # Cache rules in memory (refresh every 60s)
     rules = await get_active_rules(db)
