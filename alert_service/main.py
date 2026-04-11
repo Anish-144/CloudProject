@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from databases import Database
-import redis
+import redis.asyncio as redis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -57,16 +57,18 @@ ALERT_ROLE_ROUTING = {
 async def subscribe_alerts():
     """Subscribe to Redis alerts_stream and store alerts."""
     pubsub = redis_client.pubsub()
-    pubsub.subscribe("alerts_stream")
+    await pubsub.subscribe("alerts_stream")
     logger.info("Subscribed to alerts_stream")
     
     while True:
         try:
-            message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if message:
                 data = json.loads(message["data"])
                 payload = AlertPayload(**data)
                 await receive_alert(payload)
+            else:
+                await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Error processing Redis message: {e}")
             await asyncio.sleep(1)
@@ -98,7 +100,7 @@ async def lifespan(app: FastAPI):
     yield
     await database.disconnect()
     if redis_client:
-        redis_client.close()
+        await redis_client.close()
 
 app = FastAPI(
     title="CloudGuard Alert Service",
@@ -216,12 +218,12 @@ async def alerts_stream():
     """Server-sent events for real-time alerts."""
     async def event_generator():
         pubsub = redis_client.pubsub()
-        pubsub.subscribe("alerts_stream")
+        await pubsub.subscribe("alerts_stream")
         logger.info("SSE client connected to alerts_stream")
         
         try:
             while True:
-                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message:
                     data = json.loads(message["data"])
                     # Add created_at for frontend
@@ -231,7 +233,7 @@ async def alerts_stream():
         except Exception as e:
             logger.error(f"SSE error: {e}")
         finally:
-            pubsub.close()
+            await pubsub.close()
     
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

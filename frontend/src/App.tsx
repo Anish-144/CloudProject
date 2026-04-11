@@ -139,7 +139,7 @@ const AlertFeed = () => {
           <div key={i} className="p-3 bg-dark-700/50 hover:bg-dark-700 rounded-lg border border-dark-600 transition-colors">
             <div className="flex justify-between items-center mb-1">
               <SeverityBadge severity={a.severity} />
-              <span className="text-xs text-gray-500">{new Date(a.created_at).toLocaleTimeString()}</span>
+              <span className="text-xs text-gray-500">{new Date(a.timestamp || a.created_at).toLocaleTimeString()}</span>
             </div>
             <p className="text-xs text-gray-300 mt-1.5 leading-relaxed">{a.message}</p>
           </div>
@@ -490,7 +490,7 @@ const ITAdminDashboard = () => {
                       <td className="px-5 py-3"><SeverityBadge severity={a.severity}/></td>
                       <td className="px-5 py-3 text-xs text-brand uppercase tracking-wide">{a.type}</td>
                       <td className="px-5 py-3 text-sm text-gray-200 max-w-md truncate">{a.message}</td>
-                      <td className="px-5 py-3 text-xs text-gray-500">{new Date(a.created_at).toLocaleString()}</td>
+                      <td className="px-5 py-3 text-xs text-gray-500">{new Date(a.timestamp || a.created_at).toLocaleString()}</td>
                       <td className="px-5 py-3"><span className={`text-xs px-2 py-0.5 rounded border ${a.status==='active'?'bg-red-500/10 text-red-400 border-red-500/30':'bg-green-500/10 text-green-400 border-green-500/30'}`}>{a.status}</span></td>
                     </tr>
                   ))}
