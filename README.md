@@ -40,7 +40,17 @@ git clone https://github.com/Anish-144/CloudProject.git
 cd CloudProject
 ```
 
-### 3. Environment Configuration
+### 3. Obtain AWS Access Keys
+If you don't have AWS credentials yet, follow these steps:
+1.  Log in to the [AWS Console](https://aws.amazon.com/console/) and search for **IAM**.
+2.  In the sidebar, click **Users** and select your IAM user (ensure it has `ReadOnlyAccess`).
+3.  Click the **Security credentials** tab.
+4.  Find the **Access keys** section and click **Create access key**.
+5.  Select **Command Line Interface (CLI)**, check the confirmation box, and click **Next**.
+6.  Click **Create access key** and immediately copy/save both the **Access Key ID** and **Secret Access Key**.
+7.  **Warning**: You will never be able to see the Secret Key again after closing this screen.
+
+### 4. Environment Configuration
 The `.env` file is excluded from Git for security. You must create it from the template:
 ```bash
 cp .env.example .env
