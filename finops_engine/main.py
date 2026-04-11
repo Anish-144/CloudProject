@@ -8,6 +8,7 @@ from databases import Database
 import httpx
 from fastapi import FastAPI
 import uvicorn
+import redis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -16,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-ALERT_SERVICE_URL = os.getenv("ALERT_SERVICE_URL", "http://alert_service:8003")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 
 
 # ─── FinOps Detection Rules ───────────────────────────────────
@@ -187,18 +188,18 @@ async def store_log(db: Database, log: dict, resource_id: str):
 
 # ─── Alert Publisher ──────────────────────────────────────────
 
-async def publish_alert(client: httpx.AsyncClient, resource_id: str, finding: dict, iam_user: str = None):
+async def publish_alert(redis_client: redis.Redis, resource_id: str, finding: dict, iam_user: str = None):
     payload = {
-        "type": "finops",
-        "source_id": resource_id,
-        "severity": finding["severity"],
+        "severity": finding["severity"].upper(),
+        "type": "FINOPS",
         "message": f"[FinOps] {finding['waste_type'].replace('_', ' ').title()} detected on resource {resource_id}",
+        "resource_id": resource_id,
+        "timestamp": datetime.utcnow().isoformat(),
         "details": finding,
         "iam_user": iam_user,
     }
     try:
-        resp = await client.post(f"{ALERT_SERVICE_URL}/internal/alerts", json=payload, timeout=5)
-        resp.raise_for_status()
+        redis_client.publish("alerts_stream", json.dumps(payload))
         logger.info(f"Alert published: {finding['waste_type']} for {resource_id}")
     except Exception as e:
         logger.error(f"Failed to publish alert: {e}")
@@ -248,7 +249,7 @@ async def normalize_user_activity(db: Database, log: dict):
 
 # ─── Per-User Threshold Checking ──────────────────────────────
 
-async def check_user_thresholds(db: Database, client: httpx.AsyncClient, iam_user: str, log: dict):
+async def check_user_thresholds(db: Database, redis_client: redis.Redis, iam_user: str, log: dict):
     """Check budget and cost_spike thresholds for a specific IAM user."""
 
     # Calculate current user total cost (last 30 days)
@@ -284,13 +285,13 @@ async def check_user_thresholds(db: Database, client: httpx.AsyncClient, iam_use
                     "overage_pct": round(((user_total_cost - t_value) / t_value) * 100, 1),
                 }
             }
-            await publish_alert(client, log.get("resource_id", ""), finding, iam_user=iam_user)
+            await publish_alert(redis_client, log.get("resource_id", ""), finding, iam_user=iam_user)
             logger.info(f"Budget threshold exceeded for user {iam_user}: ${user_total_cost:.2f} > ${t_value:.2f}")
 
 
 # ─── Main Consumer Loop ───────────────────────────────────────
 
-async def process_log(db: Database, client: httpx.AsyncClient, log: dict):
+async def process_log(db: Database, redis_client: redis.Redis, log: dict):
     resource_id = log.get("resource_id")
     if not resource_id:
         return
@@ -308,11 +309,11 @@ async def process_log(db: Database, client: httpx.AsyncClient, log: dict):
     for detector in detectors:
         finding = detector(log, metrics)
         if finding:
-            await publish_alert(client, resource_id, finding, iam_user=iam_user)
+            await publish_alert(redis_client, resource_id, finding, iam_user=iam_user)
 
     # Step 4: Per-user threshold checks
     if iam_user:
-        await check_user_thresholds(db, client, iam_user, log)
+        await check_user_thresholds(db, redis_client, iam_user, log)
 
 
 # ─── Health check server ──────────────────────────────────────
@@ -338,29 +339,30 @@ async def main():
     db = Database(DATABASE_URL)
     await db.connect()
 
-    async with httpx.AsyncClient() as client:
-        logger.info("Polling incoming_logs in PostgreSQL...")
-        while True:
-            try:
-                rows = await db.fetch_all("SELECT id, log_data FROM incoming_logs WHERE processed_finops = false LIMIT 100")
-                if not rows:
-                    await asyncio.sleep(2)
-                    continue
-                
-                for row in rows:
-                    try:
-                        if isinstance(row["log_data"], str):
-                            log = json.loads(row["log_data"])
-                        else:
-                            log = row["log_data"]
-                            
-                        await process_log(db, client, log)
-                        await db.execute("UPDATE incoming_logs SET processed_finops = true WHERE id = :id", {"id": row["id"]})
-                    except Exception as e:
-                        logger.error(f"Error processing log {row['id']}: {e}")
-            except Exception as e:
-                logger.error(f"PostgreSQL polling error: {e}")
-                await asyncio.sleep(3)
+    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+    logger.info("Polling incoming_logs in PostgreSQL...")
+    while True:
+        try:
+            rows = await db.fetch_all("SELECT id, log_data FROM incoming_logs WHERE processed_finops = false LIMIT 100")
+            if not rows:
+                await asyncio.sleep(2)
+                continue
+            
+            for row in rows:
+                try:
+                    if isinstance(row["log_data"], str):
+                        log = json.loads(row["log_data"])
+                    else:
+                        log = row["log_data"]
+                        
+                    await process_log(db, redis_client, log)
+                    await db.execute("UPDATE incoming_logs SET processed_finops = true WHERE id = :id", {"id": row["id"]})
+                except Exception as e:
+                    logger.error(f"Error processing log {row['id']}: {e}")
+        except Exception as e:
+            logger.error(f"PostgreSQL polling error: {e}")
+            await asyncio.sleep(3)
 
 
 if __name__ == "__main__":

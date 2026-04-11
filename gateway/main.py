@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from databases import Database
-from routers import auth_router, ingest_router, alerts_router, finops_router, compliance_router, admin_router, activity_router, threshold_router
+from routers import auth_router, ingest_router, alerts_router, public_alerts_router, finops_router, compliance_router, admin_router, activity_router, threshold_router
 
 # ── Logging Setup ─────────────────────────────────────────────
 logging.basicConfig(
@@ -75,6 +75,7 @@ async def health():
 app.include_router(auth_router)
 app.include_router(ingest_router)
 app.include_router(alerts_router)
+app.include_router(public_alerts_router)
 app.include_router(finops_router)
 app.include_router(compliance_router)
 app.include_router(admin_router)

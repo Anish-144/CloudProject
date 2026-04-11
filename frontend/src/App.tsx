@@ -28,6 +28,9 @@ const queryClient = new QueryClient({
 
 const API_BASE = 'http://localhost:8000/api/v1';
 
+// New API base for alert endpoints without v1
+const ALERT_API_BASE = 'http://localhost:8000/api';
+
 // ─── Auth Helpers ─────────────────────────────────────────────────────────────
 export const setAuthToken = (token: string) => {
   axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
@@ -69,6 +72,8 @@ const fetchSavings   = () => axios.get(`${API_BASE}/finops/top-savings`).then(r 
 const fetchCompliance = () => axios.get(`${API_BASE}/compliance/score`).then(r => r.data);
 const fetchViolations = () => axios.get(`${API_BASE}/compliance/violations?limit=20`).then(r => r.data);
 const fetchAlerts    = (limit = 20) => axios.get(`${API_BASE}/alerts?limit=${limit}`).then(r => r.data);
+const fetchAlertSummary = () => axios.get(`${ALERT_API_BASE}/alerts/summary`).then(r => r.data);
+const fetchRecentAlerts = () => axios.get(`${ALERT_API_BASE}/alerts/recent`).then(r => r.data);
 const fetchAdminUsers = () => axios.get(`${API_BASE}/admin/users`).then(r => r.data);
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
@@ -107,8 +112,8 @@ const AlertFeed = () => {
   const [items, setItems] = useState<any[]>([]);
   useEffect(() => {
     let alive = true;
-    axios.get(`${API_BASE}/alerts?limit=10`).then(r => { if (alive) setItems(r.data); }).catch(() => {});
-    const sse = new EventSource(`${API_BASE}/alerts/stream`);
+    axios.get(`${ALERT_API_BASE}/alerts/recent?limit=10`).then(r => { if (alive) setItems(r.data); }).catch(() => {});
+    const sse = new EventSource(`${ALERT_API_BASE}/alerts/stream`);
     sse.onmessage = e => {
       try {
         const d = JSON.parse(e.data);
@@ -418,15 +423,16 @@ const ComplianceDashboard = () => {
 // ─── IT ADMIN DASHBOARD ───────────────────────────────────────────────────────
 const ITAdminDashboard = () => {
   const { data: alerts, isLoading } = useQuery({ queryKey: ['alerts-all'], queryFn: () => fetchAlerts(100) });
+  const { data: summary } = useQuery({ queryKey: ['alerts-summary'], queryFn: fetchAlertSummary });
+  const { data: recent } = useQuery({ queryKey: ['alerts-recent'], queryFn: fetchRecentAlerts });
 
   const nav: NavItem[] = [
     { path: '/dashboard/infra', icon: <Monitor size={17} />, label: 'Infrastructure Monitor' },
     { path: '/dashboard/infra', icon: <Bell size={17} />,    label: 'Alert Center' },
   ];
 
-  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
-  (alerts ?? []).forEach((a: any) => { counts[a.severity as keyof typeof counts] = (counts[a.severity as keyof typeof counts] ?? 0) + 1; });
-  const total = (alerts ?? []).length;
+  const counts = summary || { critical: 0, high: 0, medium: 0, low: 0 };
+  const total = counts.total || 0;
   const acknowledged = (alerts ?? []).filter((a: any) => a.status === 'acknowledged').length;
 
   const barData = {
@@ -479,7 +485,7 @@ const ITAdminDashboard = () => {
                   <tr>{['Severity','Type','Message','Time','Status'].map(h=><th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr>
                 </thead>
                 <tbody className="divide-y divide-dark-700/50">
-                  {(alerts??[]).slice(0,15).map((a:any,i:number)=>(
+                  {(recent??[]).slice(0,15).map((a:any,i:number)=>(
                     <tr key={i} className="hover:bg-dark-800/50 transition-colors">
                       <td className="px-5 py-3"><SeverityBadge severity={a.severity}/></td>
                       <td className="px-5 py-3 text-xs text-brand uppercase tracking-wide">{a.type}</td>
@@ -488,7 +494,7 @@ const ITAdminDashboard = () => {
                       <td className="px-5 py-3"><span className={`text-xs px-2 py-0.5 rounded border ${a.status==='active'?'bg-red-500/10 text-red-400 border-red-500/30':'bg-green-500/10 text-green-400 border-green-500/30'}`}>{a.status}</span></td>
                     </tr>
                   ))}
-                  {!alerts?.length && <tr><td colSpan={5} className="py-12 text-center text-gray-500">No alerts</td></tr>}
+                  {!recent?.length && <tr><td colSpan={5} className="py-12 text-center text-gray-500">No alerts</td></tr>}
                 </tbody>
               </table>
             </div>

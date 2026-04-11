@@ -139,6 +139,51 @@ async def acknowledge_alert(alert_id: str, current_user: dict = Depends(require_
     return {"message": "Alert acknowledged"}
 
 
+# ── Public Alerts Router (no v1) ───────────────────────────────
+public_alerts_router = APIRouter(prefix="/api/alerts", tags=["Public Alerts"])
+
+
+@public_alerts_router.get("/summary")
+async def get_alerts_summary(current_user: dict = Depends(require_authenticated)):
+    """Get alert summary counts."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get("http://alert_service:8003/alerts/summary")
+        resp.raise_for_status()
+        return resp.json()
+
+
+@public_alerts_router.get("/recent")
+async def get_recent_alerts(limit: int = 20, current_user: dict = Depends(require_authenticated)):
+    """Get recent alerts."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"http://alert_service:8003/alerts/recent?limit={limit}")
+        resp.raise_for_status()
+        return resp.json()
+
+
+@public_alerts_router.get("")
+async def get_all_alerts(limit: int = 50, offset: int = 0, current_user: dict = Depends(require_authenticated)):
+    """Get all alerts."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"http://alert_service:8003/alerts?limit={limit}&offset={offset}")
+        resp.raise_for_status()
+        return resp.json()
+
+
+@public_alerts_router.get("/stream")
+async def alerts_stream(current_user: dict = Depends(require_authenticated)):
+    """Server-sent events for real-time alerts."""
+    import httpx
+    async with httpx.AsyncClient() as client:
+        async with client.stream("GET", "http://alert_service:8003/alerts/stream") as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                yield f"{line}\n"
+
+
 # ── FinOps Router ─────────────────────────────────────────────
 # Protected: finops_manager, cloud_admin, admin
 finops_router = APIRouter(prefix="/api/v1/finops", tags=["FinOps"])

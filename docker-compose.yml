@@ -1,5 +1,22 @@
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: cloudguard_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   postgres:
     image: postgres:15-alpine
     container_name: cloudguard_postgres
@@ -67,6 +84,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       gateway:
         condition: service_healthy
     volumes:
@@ -94,6 +113,8 @@ services:
     env_file: .env
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       gateway:
         condition: service_healthy
@@ -124,6 +145,8 @@ services:
       - "8003:8003"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./alert_service:/app

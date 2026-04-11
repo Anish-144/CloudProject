@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from databases import Database
+import redis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -21,8 +22,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 
 database = Database(DATABASE_URL)
+redis_client = None
 
 # ─── Priority Scoring ─────────────────────────────────────────
 SEVERITY_SCORE = {"low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -51,25 +54,51 @@ ALERT_ROLE_ROUTING = {
 }
 
 
+async def subscribe_alerts():
+    """Subscribe to Redis alerts_stream and store alerts."""
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe("alerts_stream")
+    logger.info("Subscribed to alerts_stream")
+    
+    while True:
+        try:
+            message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message:
+                data = json.loads(message["data"])
+                payload = AlertPayload(**data)
+                await receive_alert(payload)
+        except Exception as e:
+            logger.error(f"Error processing Redis message: {e}")
+            await asyncio.sleep(1)
+
+
 # ─── Models ───────────────────────────────────────────────────
 class AlertPayload(BaseModel):
-    type: str
-    source_id: Optional[str] = None
     severity: str
+    type: str
     message: str
+    resource_id: Optional[str] = None
+    timestamp: Optional[str] = None
     details: Optional[dict] = {}
-    target_roles: Optional[list[str]] = None
     iam_user: Optional[str] = None
 
 
 # ─── App Lifespan ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global redis_client
     logger.info("Alert Service starting...")
     await database.connect()
-    logger.info("Connected to DB.")
+    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    logger.info("Connected to DB and Redis.")
+    
+    # Start Redis subscriber in background
+    asyncio.create_task(subscribe_alerts())
+    
     yield
     await database.disconnect()
+    if redis_client:
+        redis_client.close()
 
 app = FastAPI(
     title="CloudGuard Alert Service",
@@ -92,7 +121,12 @@ app.add_middleware(
 async def receive_alert(payload: AlertPayload):
     """Receive alert from FinOps or Compliance engine, deduplicate, store, notify."""
     now = datetime.utcnow()
-    dedupe_key = build_dedupe_key(payload.type, payload.source_id or "", payload.message)
+    if payload.timestamp:
+        try:
+            now = datetime.fromisoformat(payload.timestamp)
+        except:
+            pass
+    dedupe_key = build_dedupe_key(payload.type.lower(), payload.resource_id or "", payload.message)
 
     # Check for existing active duplicate
     existing = await database.fetch_one(
@@ -103,19 +137,19 @@ async def receive_alert(payload: AlertPayload):
         logger.info(f"Deduplicated alert: {dedupe_key[:12]}...")
         return {"status": "deduplicated", "existing_id": str(existing["id"])}
 
-    priority = calculate_priority(payload.severity, payload.type, now)
+    priority = calculate_priority(payload.severity.lower(), payload.type.lower(), now)
 
     # Auto-compute target_roles from alert type if not explicitly set
-    target_roles = payload.target_roles or ALERT_ROLE_ROUTING.get(payload.type, ["cloud_admin"])
+    target_roles = ALERT_ROLE_ROUTING.get(payload.type.lower(), ["cloud_admin"])
 
     alert_id = await database.execute("""
         INSERT INTO alerts (type, source_id, severity, message, details, status, priority, dedupe_key, target_roles, iam_user, created_at)
         VALUES (:type, :source_id, :severity, :message, :details, 'active', :priority, :dedupe_key, :target_roles, :iam_user, :created_at)
         RETURNING id
     """, {
-        "type": payload.type,
-        "source_id": payload.source_id,
-        "severity": payload.severity,
+        "type": payload.type.lower(),
+        "source_id": payload.resource_id,
+        "severity": payload.severity.lower(),
         "message": payload.message,
         "details": json.dumps(payload.details or {}),
         "priority": priority,
@@ -133,6 +167,73 @@ async def receive_alert(payload: AlertPayload):
 @app.get("/health")
 async def health():
     return {"status": "healthy", "service": "cloudguard-alert-service"}
+
+
+# ─── Public APIs ──────────────────────────────────────────────
+@app.get("/alerts/summary")
+async def get_alerts_summary():
+    """Get alert counts by severity."""
+    row = await database.fetch_one("""
+        SELECT
+            COUNT(CASE WHEN severity = 'critical' THEN 1 END) AS critical,
+            COUNT(CASE WHEN severity = 'high' THEN 1 END) AS high,
+            COUNT(CASE WHEN severity = 'medium' THEN 1 END) AS medium,
+            COUNT(CASE WHEN severity = 'low' THEN 1 END) AS low,
+            COUNT(*) AS total
+        FROM alerts
+        WHERE status = 'active'
+    """)
+    return dict(row) if row else {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
+
+
+@app.get("/alerts/recent")
+async def get_recent_alerts(limit: int = 20):
+    """Get recent alerts."""
+    rows = await database.fetch_all("""
+        SELECT id, severity, type, message, source_id as resource_id, created_at as timestamp, status
+        FROM alerts
+        WHERE status = 'active'
+        ORDER BY created_at DESC
+        LIMIT :limit
+    """, {"limit": limit})
+    return [dict(r) for r in rows]
+
+
+@app.get("/alerts")
+async def get_alerts(limit: int = 50, offset: int = 0):
+    """Get all alerts."""
+    rows = await database.fetch_all("""
+        SELECT id, severity, type, message, source_id as resource_id, created_at as timestamp, status
+        FROM alerts
+        ORDER BY created_at DESC
+        LIMIT :limit OFFSET :offset
+    """, {"limit": limit, "offset": offset})
+    return [dict(r) for r in rows]
+
+
+@app.get("/alerts/stream")
+async def alerts_stream():
+    """Server-sent events for real-time alerts."""
+    async def event_generator():
+        pubsub = redis_client.pubsub()
+        pubsub.subscribe("alerts_stream")
+        logger.info("SSE client connected to alerts_stream")
+        
+        try:
+            while True:
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message:
+                    data = json.loads(message["data"])
+                    # Add created_at for frontend
+                    data["created_at"] = data["timestamp"]
+                    yield f"event: alert\ndata: {json.dumps(data)}\n\n"
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.error(f"SSE error: {e}")
+        finally:
+            pubsub.close()
+    
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # ─── Auto-Remediation Simulation ─────────────────────────────
