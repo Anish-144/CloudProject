@@ -6,10 +6,10 @@ CloudGuard is a full-stack governance platform designed to monitor AWS environme
 
 *   **IAM User Activity Monitoring**: Real-time normalization of IAM logs into actionable audit trails.
 *   **FinOps Cost Analysis**: Per-user cost breakdown and 30-day forecasting.
-*   **Threshold-based Alerting**: IT Admin can set budget and cost-spike thresholds to prevent runaway spending.
+*   **Threshold-based Alerting**: Set budget and cost-spike thresholds to prevent runaway spending.
 *   **Compliance Engine**: Automated rule-checking (S3 public access, MFA, encryption, etc.).
 *   **Role-Based Access Control**: Alerts are automatically routed to specific roles (FinOps Manager, IT Admin, etc.).
-*   **PostgreSQL-Driven Ingestion**: Simplified architecture using PostgreSQL as the primary event bus (No Redis required).
+*   **Real-time Streaming**: Live alert feed using Redis Pub/Sub and SSE.
 
 ---
 
@@ -22,63 +22,79 @@ CloudGuard is a full-stack governance platform designed to monitor AWS environme
     - **FinOps Engine**: Detects idle resources, spikes, and budget overruns.
     - **Compliance Engine**: Evaluates resources against governance rules.
 - **Alert Service**: Centralized alert management and role-based routing.
-- **Database**: PostgreSQL (main store + log ingestion bus).
+- **Database**: PostgreSQL (Persistent storage) & Redis (Event streaming).
 
 ---
 
-## 🛠️ Setup & Configuration
+## 🛠️ Setup & Execution Guide
 
-### Prerequisites
-- [Docker & Docker Compose](https://docs.docker.com/get-docker/)
-- AWS IAM User with read-only access (for `cloud_collector`).
+### 1. Prerequisites
+- [Docker Decor & Docker Compose](https://docs.docker.com/get-docker/)
+- [Git](https://git-scm.com/downloads)
+- AWS IAM User with Read-Only access (for the `cloud_collector`).
 
-### 1. Configure Credentials
-Create a `.env` file in the root directory and add your AWS keys:
-```env
-# AWS Credentials
-AWS_ACCESS_KEY_ID=your_access_key_here
-AWS_SECRET_ACCESS_KEY=your_secret_key_here
-AWS_DEFAULT_REGION=us-east-1
-
-# Postgres Connection
-DATABASE_URL=postgresql://cloudguard_user:cloudguard_secret_2024@postgres:5432/cloudguard
-
-# Auth Security
-JWT_SECRET_KEY=generate-a-secure-random-key
-```
-
-### 2. Start the Stack
+### 2. Installation
+Clone the repository and enter the directory:
 ```bash
-docker compose up -d --build
+git clone https://github.com/Anish-144/CloudProject.git
+cd CloudProject
 ```
 
+### 3. Environment Configuration
+The `.env` file is excluded from Git for security. You must create it from the template:
+```bash
+cp .env.example .env
+```
+Open the `.env` file and fill in your **AWS credentials**:
+- `AWS_ACCESS_KEY_ID`: Your IAM Key ID (starting with `AKIA...`)
+- `AWS_SECRET_ACCESS_KEY`: Your IAM Secret Key.
+- `AWS_DEFAULT_REGION`: e.g., `ap-south-1`.
+
+### 4. Run the Platform
+Start all services in the background:
+```bash
+docker compose up --build -d
+```
+*Note: The `--build` flag is required whenever code changes or new files are added.*
+
 ---
 
-## 📊 Platform Roles & Access
+## 🩺 System Monitoring & Troubleshooting
 
-| Role | Access Level | Primary Focus |
+### View Container Logs
+To see what is happening inside the services (useful for debugging):
+```bash
+# All services
+docker compose logs -f
+
+# Specific service (e.g. collector)
+docker compose logs -f cloud_collector
+```
+
+### Common Issues
+- **Invalid Date**: If the UI shows "Invalid Date", ensure you have pulled the latest `App.tsx` and run `docker compose up --build -d`.
+- **AuthFailure (AWS)**: Check your `.env` file. Ensure `AWS_ACCESS_KEY_ID` contains the `AKIA...` key and NOT the secret key.
+- **Collector Errors**: Ensure your IAM user has permissions for `ec2:DescribeInstances`, `s3:ListAllMyBuckets`, and `iam:ListUsers`.
+
+---
+
+## 📊 Access Interfaces
+| Service | URL | Note |
 | :--- | :--- | :--- |
-| **Cloud Admin** | Global View | Full platform management |
-| **FinOps Manager** | FinOps Dashboard | Cost savings, User costs, Budgets |
-| **Compliance Mgr** | Compliance View | Rule violations and remediation |
-| **IT Admin** | User Activity | IAM tracking and Threshold management |
+| **Frontend** | [http://localhost:3000](http://localhost:3000) | Login: `admin@cloudguard.io` / `admin123` |
+| **API Docs** | [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs) | Interactive Swagger UI |
+| **Alert Service** | [http://localhost:8003/health](http://localhost:8003/health) | Alert management health check |
 
 ---
 
-## 🩺 API Access
-| Service | Link | Description |
-| :--- | :--- | :--- |
-| **Frontend** | [http://localhost:3000](http://localhost:3000) | Main Platform Dashboard |
-| **API Docs** | [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs) | Backend Swagger Documentation |
-| **Gateway Health** | [http://localhost:8000/health](http://localhost:8000/health) | System health status |
-
----
-
-## 🛠️ Typical Development Workflow
-1.  **Add/Modify Features**: Update `gateway/routers.py` for API or `finops_engine/main.py` for logic.
-2.  **Database Migrations**: Add schema changes to `database/init.sql`.
-3.  **UI Updates**: Modify components in `frontend/src/App.tsx`.
-4.  **Redeploy**: Run `docker compose up -d` (Docker handles hot-reloading for code changes via volumes).
+## 🛠️ Development Workflow
+1.  **Code Changes**: After modifying files, run `docker compose up --build -d` to refresh the containers.
+2.  **Updating Repo**: 
+    ```bash
+    git pull origin main
+    docker compose up --build -d
+    ```
+3.  **Secrets**: Never commit your `.env` file. Use `.env.example` to document new variables.
 
 ---
 Developed for secure, transparent, and cost-efficient cloud operations.
