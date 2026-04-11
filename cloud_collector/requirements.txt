@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+httpx
+databases[postgresql]
+asyncpg
+boto3
+botocore
+python-dateutil

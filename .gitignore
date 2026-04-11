@@ -1,18 +1,19 @@
-# Environment variables
+# Environment variables — never commit secrets
 .env
 .env.*
 *.env
+!.env.example
 
-# Python
+# Python bytecode & caches
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyd
 .Python
 env/
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -26,19 +27,30 @@ var/
 *.egg
 venv/
 .venv/
+pip-log.txt
 
 # Node / Frontend
 node_modules/
-npm-debug.log
+npm-debug.log*
 yarn-error.log
+yarn-debug.log*
+.pnp/
+
+# Build outputs
 dist/
 build/
 
-# IDEs / OS
+# Docker
+*.dockerignore
+
+# IDEs / Editors
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+
+# OS artifacts
 .DS_Store
 Thumbs.db
+desktop.ini
