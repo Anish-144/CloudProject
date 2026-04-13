@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Link, useLocation, Navigate } from 'react
 import {
   ShieldCheck, TrendingDown, Bell, Cloud, Activity, AlertTriangle,
   CheckCircle, DollarSign, Server, Users, Crown, BarChart2, Lock,
-  LogOut, PiggyBank, Cpu, Monitor, Settings, Database
+  LogOut, PiggyBank, Cpu, Monitor, Settings, Database, Sun, Moon
 } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
@@ -37,8 +37,8 @@ export const setAuthToken = (token: string) => {
 };
 
 // ─── Auth Context ─────────────────────────────────────────────────────────────
-interface AuthCtx { authed: boolean; role: string; email: string; login: (token: string, role: string, email: string) => void; logout: () => void; }
-const AuthContext = createContext<AuthCtx>({ authed: false, role: '', email: '', login: () => {}, logout: () => {} });
+interface AuthCtx { authed: boolean; role: string; email: string; login: (token: string, role: string, email: string) => void; logout: () => void; theme: 'light' | 'dark'; toggleTheme: () => void; }
+const AuthContext = createContext<AuthCtx>({ authed: false, role: '', email: '', login: () => {}, logout: () => {}, theme: 'dark', toggleTheme: () => {} });
 export const useAuth = () => useContext(AuthContext);
 
 // ─── Role Routing ─────────────────────────────────────────────────────────────
@@ -91,8 +91,8 @@ const MetricCard = ({ title, value, sub, icon: Icon, color }: any) => (
       <Icon size={80} />
     </div>
     <div className="relative z-10">
-      <p className="text-xs text-gray-400 font-medium mb-1 uppercase tracking-wider">{title}</p>
-      <p className="text-3xl font-bold text-white mb-1">{value}</p>
+      <p className="text-xs dark:text-gray-400 text-gray-500 font-medium mb-1 uppercase tracking-wider">{title}</p>
+      <p className="text-3xl font-bold dark:text-white text-gray-900 mb-1">{value}</p>
       <p className={`text-xs font-medium ${color}`}>{sub}</p>
     </div>
     <div className={`absolute bottom-0 left-0 h-0.5 w-full bg-gradient-to-r from-transparent ${color.replace('text-', 'via-').replace('400', '500').replace('emerald', 'emerald').replace('400','400')} to-transparent opacity-30`} />
@@ -133,8 +133,8 @@ const AlertFeed = () => {
 
   return (
     <div className="glass-panel rounded-2xl flex flex-col h-full overflow-hidden">
-      <div className="p-4 border-b border-dark-700 bg-dark-800 flex items-center justify-between">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
+      <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex items-center justify-between">
+        <h3 className="font-semibold text-sm flex items-center gap-2 dark:text-white text-gray-900">
           <Bell size={16} className="text-yellow-400" /> Live Alert Stream
         </h3>
         <span className="flex h-2.5 w-2.5 relative">
@@ -142,17 +142,17 @@ const AlertFeed = () => {
           <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
         </span>
       </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-2">
+      <div className="flex-1 overflow-y-auto p-2 space-y-2 dark:bg-transparent bg-white/50">
         {items.map((a, i) => (
-          <div key={i} className="p-3 bg-dark-700/50 hover:bg-dark-700 rounded-lg border border-dark-600 transition-colors">
+          <div key={i} className="p-3 dark:bg-dark-700/50 bg-white hover:dark:bg-dark-700 hover:bg-gray-50 rounded-lg border dark:border-dark-600 border-gray-100 transition-colors shadow-sm">
             <div className="flex justify-between items-center mb-1">
               <SeverityBadge severity={a.severity} />
               <span className="text-xs text-gray-500">{new Date(a.timestamp || a.created_at).toLocaleTimeString()}</span>
             </div>
-            <p className="text-xs text-gray-300 mt-1.5 leading-relaxed">{a.message}</p>
+            <p className="text-xs dark:text-gray-300 text-gray-600 mt-1.5 leading-relaxed">{a.message}</p>
           </div>
         ))}
-        {items.length === 0 && <p className="text-center text-gray-500 text-sm py-8">Waiting for events…</p>}
+        {items.length === 0 && <p className="text-center text-gray-500 text-sm py-8 font-medium">Waiting for events…</p>}
       </div>
     </div>
   );
@@ -165,13 +165,13 @@ const Sidebar = ({ navItems }: { navItems: NavItem[] }) => {
   const { email, role, logout } = useAuth();
   return (
     <aside className="w-64 glass-panel border-r border-dark-700 flex flex-col shrink-0">
-      <div className="p-5 flex items-center gap-3 border-b border-dark-700">
+      <div className="p-5 flex items-center gap-3 border-b dark:border-dark-700 border-gray-100 italic font-mono">
         <div className="p-2 bg-brand rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.5)]">
           <Cloud size={20} className="text-white" />
         </div>
         <div>
-          <span className="font-bold tracking-wide block">CloudGuard</span>
-          <span className="text-[10px] text-gray-500 uppercase tracking-widest">Governance</span>
+          <span className="font-bold tracking-wide block dark:text-white text-gray-900">CloudGuard</span>
+          <span className="text-[10px] dark:text-gray-500 text-gray-400 uppercase tracking-widest">Governance</span>
         </div>
       </div>
       <nav className="flex-1 p-4 space-y-1">
@@ -179,8 +179,8 @@ const Sidebar = ({ navItems }: { navItems: NavItem[] }) => {
           <Link key={item.path} to={item.path}>
             <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-sm ${
               pathname === item.path
-                ? 'bg-brand/10 text-brand border border-brand/20 font-semibold'
-                : 'text-gray-400 hover:bg-dark-700 hover:text-gray-200'
+                ? 'bg-brand/10 text-brand border border-brand/20 font-semibold shadow-sm'
+                : 'dark:text-gray-400 text-gray-500 dark:hover:bg-dark-700 hover:bg-gray-100 dark:hover:text-gray-200 hover:text-gray-900'
             }`}>
               {item.icon}
               <span>{item.label}</span>
@@ -188,30 +188,51 @@ const Sidebar = ({ navItems }: { navItems: NavItem[] }) => {
           </Link>
         ))}
       </nav>
-      <div className="p-4 border-t border-dark-700 space-y-2">
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-dark-700/50 border border-dark-600">
+      <div className="p-4 border-t dark:border-dark-700 border-gray-100 space-y-2">
+        <div className="flex items-center gap-3 p-3 rounded-xl dark:bg-dark-700/50 bg-gray-50 border dark:border-dark-600 border-gray-200">
           <div className="w-8 h-8 rounded-full bg-brand/20 border border-brand/30 flex items-center justify-center text-brand font-bold text-sm shrink-0">
             {email.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-medium text-gray-200 truncate">{email}</p>
-            <p className="text-[10px] text-gray-500 mt-0.5">{getRoleLabel(role)}</p>
+            <p className="text-xs font-medium dark:text-gray-200 text-gray-900 truncate">{email}</p>
+            <p className="text-[10px] dark:text-gray-500 text-gray-400 mt-0.5">{getRoleLabel(role)}</p>
           </div>
         </div>
-        <button onClick={logout} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors text-sm">
-          <LogOut size={15} /> Sign Out
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+          <ThemeToggle />
+          <button onClick={logout} className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg dark:text-gray-400 text-gray-500 dark:hover:text-red-400 hover:text-red-500 dark:hover:bg-red-500/10 hover:bg-red-500/5 transition-colors text-xs border border-transparent hover:border-red-500/20">
+            <LogOut size={14} /> Out
+          </button>
+        </div>
       </div>
     </aside>
   );
 };
 
+const ThemeToggle = () => {
+  const { theme, toggleTheme } = useAuth();
+  return (
+    <button
+      onClick={toggleTheme}
+      className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg dark:text-gray-400 text-gray-500 dark:hover:text-brand hover:text-brand dark:hover:bg-brand/10 hover:bg-brand/5 transition-all text-xs border border-transparent hover:border-brand/20"
+      title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+    >
+      {theme === 'dark' ? <><Sun size={14} /> Light</> : <><Moon size={14} /> Dark</>}
+    </button>
+  );
+};
+
 const Layout = ({ children, nav }: { children: React.ReactNode; nav: NavItem[] }) => (
-  <div className="flex h-screen overflow-hidden">
+  <div className="flex h-screen overflow-hidden dark:bg-dark-900 bg-gray-50 dark:text-gray-100 text-gray-900">
     <Sidebar navItems={nav} />
-    <main className="flex-1 overflow-y-auto bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-dark-800 via-dark-900 to-dark-900 relative">
-      <div className="absolute top-0 w-full h-0.5 bg-gradient-to-r from-brand via-purple-500 to-brand opacity-50 z-10" />
-      <div className="p-8 pb-16">{children}</div>
+    <main className="flex-1 overflow-y-auto relative bg-transparent">
+      <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-brand via-purple-500 to-brand opacity-30 z-10" />
+      <div className="p-8 pb-16 relative z-0">{children}</div>
+      {/* Dynamic Background */}
+      <div className="fixed inset-0 z-[-1] pointer-events-none overflow-hidden">
+        <div className="absolute top-0 left-1/4 w-[600px] h-[600px] dark:bg-brand/5 bg-brand/10 rounded-full blur-[120px] opacity-40 animate-pulse" />
+        <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] dark:bg-purple-500/5 bg-purple-500/10 rounded-full blur-[100px] opacity-30" />
+      </div>
     </main>
   </div>
 );
@@ -309,12 +330,12 @@ const FinOpsDashboard = () => {
                 { label:'Overprovisioned',         desc:`${fp?.overprovisioned_resources??0} instances using < 30% of allocated`, badge:'Medium', cls:'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' },
                 { label:'Cost Spikes Detected',    desc:`${fp?.cost_spike_resources??0} resources with sudden cost spike`,   badge:'High',   cls:'text-orange-400 bg-orange-500/10 border-orange-500/20' },
               ].map((r,i) => (
-                <div key={i} className="flex justify-between items-center p-4 bg-dark-700/50 rounded-xl border border-dark-600 hover:bg-dark-700 transition-colors">
+                <div key={i} className="flex justify-between items-center p-4 dark:bg-dark-700/50 bg-gray-50 rounded-xl border dark:border-dark-600 border-gray-100 dark:hover:bg-dark-700 hover:bg-gray-100 transition-colors">
                   <div>
-                    <p className="font-medium text-sm text-white">{r.label}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{r.desc}</p>
+                    <p className="font-medium text-sm dark:text-white text-gray-900">{r.label}</p>
+                    <p className="text-xs dark:text-gray-400 text-gray-500 mt-0.5">{r.desc}</p>
                   </div>
-                  <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ml-4 shrink-0 ${r.cls}`}>{r.badge}</span>
+                  <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ml-4 shrink-0 shadow-sm ${r.cls}`}>{r.badge}</span>
                 </div>
               ))}
             </div>
@@ -361,15 +382,16 @@ const ComplianceDashboard = () => {
                 <div className="w-40 h-40 relative mb-5">
                   <Doughnut data={donut} options={{ responsive:true, cutout:'78%', plugins:{tooltip:{enabled:false}} }} />
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-4xl font-bold">{comp?.overall_score}%</span>
-                    <span className="text-xs text-gray-400 mt-0.5">Compliance</span>
+                    <span className="text-4xl font-bold dark:text-white text-gray-900">{comp?.overall_score}%</span>
+                    <span className="text-xs dark:text-gray-400 text-gray-500 mt-0.5 font-medium">Compliance</span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 w-full">
+                  {/* ... */}
                   {[{l:'Critical',v:comp?.critical_violations??0,c:'text-red-400'},{l:'High',v:comp?.high_violations??0,c:'text-orange-400'},{l:'Medium',v:comp?.medium_violations??0,c:'text-yellow-400'},{l:'Low',v:comp?.low_violations??0,c:'text-blue-400'}].map(x=>(
-                    <div key={x.l} className="text-center p-2 bg-dark-700/50 rounded-lg border border-dark-600">
+                    <div key={x.l} className="text-center p-2 dark:bg-dark-700/50 bg-gray-50 rounded-lg border dark:border-dark-600 border-gray-100">
                       <p className={`text-xl font-bold ${x.c}`}>{x.v}</p>
-                      <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">{x.l}</p>
+                      <p className="text-[10px] dark:text-gray-500 text-gray-400 uppercase tracking-wider mt-0.5 font-medium">{x.l}</p>
                     </div>
                   ))}
                 </div>
@@ -826,7 +848,7 @@ const CloudAdminDashboard = () => {
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-7 h-7 rounded-full bg-brand/20 border border-brand/30 flex items-center justify-center text-brand text-xs font-bold shrink-0">{u.email.charAt(0).toUpperCase()}</div>
-                            <span className="text-sm text-gray-200">{u.email}</span>
+                            <span className="text-sm dark:text-gray-200 text-gray-700 font-medium">{u.email}</span>
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -896,8 +918,8 @@ const LoginScreen = ({ onLogin }: { onLogin: (token: string, role: string, email
           <p className="text-gray-400 text-sm">Cloud Governance Platform</p>
         </div>
 
-        <div className="glass-panel rounded-2xl p-8 border border-dark-700 shadow-2xl">
-          <h2 className="text-lg font-semibold text-white mb-6">Sign in to your account</h2>
+        <div className="glass-panel rounded-2xl p-8 border dark:border-dark-700 border-gray-200 shadow-2xl">
+          <h2 className="text-lg font-semibold dark:text-white text-gray-900 mb-6">Sign in to your account</h2>
           {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl mb-4 text-sm">{error}</div>}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -965,14 +987,19 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [authed, setAuthed] = useState(false);
   const [role, setRole]     = useState('');
   const [email, setEmail]   = useState('');
+  const [theme, setTheme]   = useState<'light' | 'dark'>('dark');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem('cloudguard_token');
     const r     = localStorage.getItem('cloudguard_role') ?? '';
     const e     = localStorage.getItem('cloudguard_email') ?? '';
+    const t     = localStorage.getItem('cloudguard_theme') as 'light' | 'dark' ?? 'dark';
     
-    // Only auto-auth if we have BOTH a token and a non-empty role
+    setTheme(t);
+    if (t === 'dark') document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+
     if (token && r) {
       setAuthToken(token);
       setRole(r);
@@ -1002,14 +1029,22 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     queryClient.clear();
   };
 
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    localStorage.setItem('cloudguard_theme', next);
+    if (next === 'dark') document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+  };
+
   if (loading) return (
-    <div className="h-screen flex items-center justify-center bg-dark-900">
+    <div className="h-screen flex items-center justify-center dark:bg-dark-900 bg-gray-50">
       <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-brand" />
     </div>
   );
 
   return (
-    <AuthContext.Provider value={{ authed, role, email, login, logout }}>
+    <AuthContext.Provider value={{ authed, role, email, login, logout, theme, toggleTheme }}>
       {children}
     </AuthContext.Provider>
   );
