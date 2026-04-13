@@ -101,12 +101,12 @@ const MetricCard = ({ title, value, sub, icon: Icon, color }: any) => (
 
 const SeverityBadge = ({ severity }: { severity: string }) => {
   const s: Record<string, string> = {
-    critical: 'bg-red-500/20 text-red-400 border-red-500/40',
-    high:     'bg-orange-500/20 text-orange-400 border-orange-500/40',
-    medium:   'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
-    low:      'bg-gray-500/20 text-gray-400 border-gray-500/40',
+    critical: 'dark:bg-red-500/20 bg-red-50 text-red-500 dark:text-red-400 border-red-500/30',
+    high:     'dark:bg-orange-500/20 bg-orange-50 text-orange-600 dark:text-orange-400 border-orange-500/30',
+    medium:   'dark:bg-yellow-500/20 bg-yellow-50 text-yellow-600 dark:text-yellow-400 border-yellow-500/30',
+    low:      'dark:bg-gray-500/20 bg-gray-50 text-gray-600 dark:text-gray-400 border-gray-500/30',
   };
-  return <span className={`text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${s[severity] ?? s.low}`}>{severity}</span>;
+  return <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border shadow-sm ${s[severity] ?? s.low}`}>{severity}</span>;
 };
 
 const Spinner = () => (
@@ -164,14 +164,14 @@ const Sidebar = ({ navItems }: { navItems: NavItem[] }) => {
   const { pathname } = useLocation();
   const { email, role, logout } = useAuth();
   return (
-    <aside className="w-64 glass-panel border-r border-dark-700 flex flex-col shrink-0">
+    <aside className="w-64 glass-panel border-r dark:border-dark-700 border-gray-100 flex flex-col shrink-0">
       <div className="p-5 flex items-center gap-3 border-b dark:border-dark-700 border-gray-100 italic font-mono">
         <div className="p-2 bg-brand rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.5)]">
           <Cloud size={20} className="text-white" />
         </div>
         <div>
           <span className="font-bold tracking-wide block dark:text-white text-gray-900">CloudGuard</span>
-          <span className="text-[10px] dark:text-gray-500 text-gray-400 uppercase tracking-widest">Governance</span>
+          <span className="text-[10px] dark:text-gray-500 text-gray-400 uppercase tracking-widest font-bold">Governance</span>
         </div>
       </div>
       <nav className="flex-1 p-4 space-y-1">
@@ -222,20 +222,23 @@ const ThemeToggle = () => {
   );
 };
 
-const Layout = ({ children, nav }: { children: React.ReactNode; nav: NavItem[] }) => (
-  <div className="flex h-screen overflow-hidden dark:bg-dark-900 bg-gray-50 dark:text-gray-100 text-gray-900">
-    <Sidebar navItems={nav} />
-    <main className="flex-1 overflow-y-auto relative bg-transparent">
-      <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-brand via-purple-500 to-brand opacity-30 z-10" />
-      <div className="p-8 pb-16 relative z-0">{children}</div>
-      {/* Dynamic Background */}
-      <div className="fixed inset-0 z-[-1] pointer-events-none overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-[600px] h-[600px] dark:bg-brand/5 bg-brand/10 rounded-full blur-[120px] opacity-40 animate-pulse" />
-        <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] dark:bg-purple-500/5 bg-purple-500/10 rounded-full blur-[100px] opacity-30" />
-      </div>
-    </main>
-  </div>
-);
+const Layout = ({ children, nav }: { children: React.ReactNode; nav: NavItem[] }) => {
+  const { theme } = useAuth();
+  return (
+    <div className={`flex h-screen overflow-hidden ${theme === 'dark' ? 'bg-dark-900 text-gray-100' : 'bg-gray-50 text-gray-900'}`}>
+      <Sidebar navItems={nav} />
+      <main className="flex-1 overflow-y-auto relative bg-transparent">
+        <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-brand via-purple-500 to-brand opacity-30 z-10" />
+        <div className="p-8 pb-16 relative z-0">{children}</div>
+        {/* Dynamic Background */}
+        <div className="fixed inset-0 z-[-1] pointer-events-none overflow-hidden">
+          <div className="absolute top-0 left-1/4 w-[600px] h-[600px] dark:bg-brand/5 bg-brand/10 rounded-full blur-[120px] opacity-40 animate-pulse" />
+          <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] dark:bg-purple-500/5 bg-purple-500/10 rounded-full blur-[100px] opacity-30" />
+        </div>
+      </main>
+    </div>
+  );
+};
 
 // ─── FINOPS DASHBOARD ─────────────────────────────────────────────────────────
 const FinOpsDashboard = () => {
@@ -265,9 +268,9 @@ const FinOpsDashboard = () => {
             <h1 className="text-3xl font-bold flex items-center gap-3 mb-1">
               <TrendingDown className="text-brand" /> FinOps Intelligence
             </h1>
-            <p className="text-gray-400 text-sm">Cost optimisation · Waste detection · Savings insights</p>
+            <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Cost optimisation · Waste detection · Savings insights</p>
           </div>
-          <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1.5 rounded-full font-medium">Live Data</span>
+          <span className="text-[10px] bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 px-3 py-1.5 rounded-full font-bold uppercase tracking-wider">Live Data</span>
         </div>
 
         {fpLoad ? <Spinner /> : (
@@ -286,37 +289,54 @@ const FinOpsDashboard = () => {
           </div>
         )}
 
-        <div className="glass-panel rounded-2xl p-6">
-          <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-brand" /> Cost Trend — Last 30 Days</h3>
+        <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
+          <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><BarChart2 size={18} className="text-brand" /> Cost Trend — Last 30 Days</h3>
           {tdLoad ? <Spinner /> : (
             <div className="h-52">
-              <Line data={trendChart} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#1f2937' }, ticks: { color: '#9ca3af' } }, x: { grid: { display: false }, ticks: { color: '#9ca3af', maxTicksLimit: 8 } } } }} />
+              <Line 
+                data={trendChart} 
+                options={{ 
+                  responsive: true, 
+                  maintainAspectRatio: false, 
+                  plugins: { legend: { display: false } }, 
+                  scales: { 
+                    y: { 
+                      grid: { color: theme === 'dark' ? '#1f2937' : '#e5e7eb' }, 
+                      ticks: { color: theme === 'dark' ? '#9ca3af' : '#6b7280', font: { size: 10 } } 
+                    }, 
+                    x: { 
+                      grid: { display: false }, 
+                      ticks: { color: theme === 'dark' ? '#9ca3af' : '#6b7280', maxTicksLimit: 8, font: { size: 10 } } 
+                    } 
+                  } 
+                }} 
+              />
             </div>
           )}
         </div>
 
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
-            <h3 className="font-semibold flex items-center gap-2"><DollarSign size={18} className="text-emerald-400" /> Top Savings Opportunities</h3>
+        <div className="glass-panel rounded-2xl overflow-hidden mb-6">
+          <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex justify-between items-center">
+            <h3 className="font-semibold flex items-center gap-2 dark:text-white text-gray-900"><DollarSign size={18} className="text-emerald-500" /> Top Savings Opportunities</h3>
           </div>
           {svLoad ? <Spinner /> : (
-            <div className="divide-y divide-dark-700/50">
+            <div className="divide-y dark:divide-dark-700/50 divide-gray-100">
               {(savings ?? []).slice(0, 6).map((item: any, i: number) => (
-                <div key={i} className="flex justify-between items-center px-6 py-4 hover:bg-dark-800/50 transition-colors">
+                <div key={i} className="flex justify-between items-center px-6 py-4 dark:hover:bg-dark-800/50 hover:bg-gray-50 transition-colors">
                   <div className="flex items-center gap-4">
-                    <div className="w-7 h-7 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xs font-bold">{i+1}</div>
+                    <div className="w-7 h-7 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 dark:text-emerald-400 text-xs font-bold shadow-sm">{i+1}</div>
                     <div>
-                      <p className="text-sm font-medium text-gray-200">{item.message}</p>
+                      <p className="text-sm font-semibold dark:text-gray-200 text-gray-800">{item.message}</p>
                       <SeverityBadge severity={item.severity} />
                     </div>
                   </div>
                   <div className="text-right shrink-0 ml-4">
-                    <p className="font-bold text-emerald-400 text-sm">${parseFloat(item.details?.estimated_savings ?? 0).toFixed(0)}/mo</p>
-                    <button className="mt-1 text-xs bg-dark-600 hover:bg-emerald-500/20 hover:text-emerald-400 text-gray-400 px-3 py-1 rounded transition-colors border border-dark-500 hover:border-emerald-500/30">Review</button>
+                    <p className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">${parseFloat(item.details?.estimated_savings ?? 0).toFixed(0)}/mo</p>
+                    <button className="mt-1 text-[10px] font-bold uppercase tracking-wider dark:bg-dark-600 bg-white hover:dark:bg-emerald-500/20 hover:bg-emerald-50 dark:text-gray-400 text-gray-600 hover:text-emerald-600 dark:hover:text-emerald-400 px-3 py-1 rounded transition-colors border dark:border-dark-500 border-gray-200 hover:dark:border-emerald-500/30 hover:border-emerald-200 shadow-sm">Review</button>
                   </div>
                 </div>
               ))}
-              {!(savings?.length) && <p className="py-12 text-center text-gray-500">No savings opportunities detected</p>}
+              {!(savings?.length) && <p className="py-12 text-center text-gray-500 italic">No savings opportunities detected</p>}
             </div>
           )}
         </div>
@@ -364,8 +384,8 @@ const ComplianceDashboard = () => {
     <Layout nav={nav}>
       <div className="space-y-6 animate-in fade-in duration-500">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><ShieldCheck className="text-purple-400" /> Compliance Posture</h1>
-          <p className="text-gray-400 text-sm">Framework adherence · Violations · Audit tracking</p>
+          <h1 className="text-3xl font-bold flex items-center gap-3 mb-1 dark:text-white text-gray-900"><ShieldCheck className="text-purple-500" /> Compliance Posture</h1>
+          <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Framework adherence · Violations · Audit tracking</p>
         </div>
 
         {cpLoad ? <Spinner /> : (
@@ -398,16 +418,16 @@ const ComplianceDashboard = () => {
               </div>
 
               <div className="glass-panel rounded-2xl p-6 lg:col-span-3">
-                <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-purple-400" /> By Framework Category</h3>
-                <div className="space-y-3">
+                <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><BarChart2 size={18} className="text-purple-500" /> By Framework Category</h3>
+                <div className="space-y-4">
                   {Object.entries(comp?.by_category??{}).map(([cat,val]:any) => (
                     <div key={cat}>
-                      <div className="flex justify-between text-sm mb-1.5">
-                        <span className="text-gray-300 capitalize">{cat.replace(/_/g,' ')}</span>
-                        <span className={`font-bold ${val>80?'text-emerald-400':'text-orange-400'}`}>{val}%</span>
+                      <div className="flex justify-between text-sm mb-1.5 font-medium">
+                        <span className="dark:text-gray-300 text-gray-600 capitalize">{cat.replace(/_/g,' ')}</span>
+                        <span className={`font-bold ${val>80?'text-emerald-500':'text-orange-500'}`}>{val}%</span>
                       </div>
-                      <div className="w-full bg-dark-700 rounded-full h-2">
-                        <div className={`h-2 rounded-full transition-all duration-700 ${val>80?'bg-emerald-500':'bg-orange-500'}`} style={{width:`${val}%`}} />
+                      <div className="w-full dark:bg-dark-700 bg-gray-100 rounded-full h-2 shadow-inner">
+                        <div className={`h-2 rounded-full transition-all duration-700 ${val>80?'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]':'bg-orange-500'}`} style={{width:`${val}%`}} />
                       </div>
                     </div>
                   ))}
@@ -417,29 +437,28 @@ const ComplianceDashboard = () => {
           </>
         )}
 
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
-            <h3 className="font-semibold flex items-center gap-2"><AlertTriangle size={18} className="text-yellow-400" /> Recent Violations</h3>
-            <span className="text-xs text-gray-500">{violations?.length ?? 0} records</span>
+        <div className="glass-panel rounded-2xl overflow-hidden mt-6">
+          <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex justify-between items-center">
+            <h3 className="font-semibold flex items-center gap-2 dark:text-white text-gray-900"><AlertTriangle size={18} className="text-yellow-500" /> Recent Violations</h3>
+            <span className="text-[10px] font-bold dark:text-gray-500 text-gray-400 uppercase tracking-widest">{violations?.length ?? 0} records</span>
           </div>
           {vlLoad ? <Spinner /> : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="text-xs text-gray-400 bg-dark-800/60">
-                  <tr>{['Rule','Severity','Resource Type','Region','Status','Date'].map(h=><th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr>
+                <thead className="text-[10px] font-bold uppercase tracking-wider dark:text-gray-400 text-gray-500 dark:bg-dark-800/60 bg-gray-50">
+                  <tr>{['Rule','Severity','Resource Type','Region','Status','Date'].map(h=><th key={h} className="px-5 py-3">{h}</th>)}</tr>
                 </thead>
-                <tbody className="divide-y divide-dark-700/50">
+                <tbody className="divide-y dark:divide-dark-700/50 divide-gray-100">
                   {(violations??[]).map((v:any,i:number)=>(
-                    <tr key={i} className="hover:bg-dark-800/50 transition-colors">
-                      <td className="px-5 py-3 text-sm text-gray-200">{v.rule_name}</td>
+                    <tr key={i} className="dark:hover:bg-dark-800/50 hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-3 text-sm font-medium dark:text-gray-200 text-gray-800">{v.rule_name}</td>
                       <td className="px-5 py-3"><SeverityBadge severity={v.severity} /></td>
-                      <td className="px-5 py-3 text-xs text-gray-400">{v.resource_type??'—'}</td>
-                      <td className="px-5 py-3 text-xs text-gray-400">{v.region??'—'}</td>
-                      <td className="px-5 py-3"><span className={`text-xs px-2 py-0.5 rounded border ${v.status==='open'?'bg-red-500/10 text-red-400 border-red-500/30':'bg-gray-500/10 text-gray-400 border-gray-500/30'}`}>{v.status}</span></td>
+                      <td className="px-5 py-3 text-xs dark:text-gray-400 text-gray-500 font-medium">{v.resource_type??'—'}</td>
+                      <td className="px-5 py-3 text-xs dark:text-gray-400 text-gray-500">{v.region??'—'}</td>
+                      <td className="px-5 py-3"><span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border shadow-sm ${v.status==='open'?'bg-red-500/10 text-red-500 border-red-500/30':'dark:bg-gray-500/10 bg-gray-100 dark:text-gray-400 text-gray-500 border-gray-500/30'}`}>{v.status}</span></td>
                       <td className="px-5 py-3 text-xs text-gray-500">{new Date(v.created_at).toLocaleDateString()}</td>
                     </tr>
                   ))}
-                  {!violations?.length && <tr><td colSpan={6} className="py-12 text-center text-gray-500">No violations found</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -476,8 +495,8 @@ const ITAdminDashboard = () => {
     <Layout nav={nav.slice(0,1)}>
       <div className="space-y-6 animate-in fade-in duration-500">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><Server className="text-cyan-400" /> Infrastructure Monitor</h1>
-          <p className="text-gray-400 text-sm">Resource health · Alert monitoring · Live event stream</p>
+          <h1 className="text-3xl font-bold flex items-center gap-3 mb-1 dark:text-white text-gray-900"><Server className="text-cyan-500" /> Infrastructure Monitor</h1>
+          <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Resource health · Alert monitoring · Live event stream</p>
         </div>
 
         {isLoading ? <Spinner /> : (
@@ -491,10 +510,21 @@ const ITAdminDashboard = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6" style={{height:'380px'}}>
           <div className="glass-panel rounded-2xl p-6 lg:col-span-2 flex flex-col">
-            <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-cyan-400" /> Alert Severity Breakdown</h3>
+            <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><BarChart2 size={18} className="text-cyan-500" /> Alert Severity Breakdown</h3>
             {isLoading ? <Spinner /> : (
               <div className="flex-1">
-                <Bar data={barData} options={{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{grid:{color:'#1f2937'},ticks:{color:'#9ca3af'}}, x:{grid:{display:false},ticks:{color:'#9ca3af'}} } }} />
+                <Bar 
+                  data={barData} 
+                  options={{ 
+                    responsive:true, 
+                    maintainAspectRatio:false, 
+                    plugins:{legend:{display:false}}, 
+                    scales:{ 
+                      y:{ grid:{color:theme === 'dark' ? '#1f2937' : '#e5e7eb'}, ticks:{color:theme === 'dark' ? '#9ca3af' : '#6b7280', font:{size:10}} }, 
+                      x:{ grid:{display:false}, ticks:{color:theme === 'dark' ? '#9ca3af' : '#6b7280', font:{size:10}} } 
+                    } 
+                  }} 
+                />
               </div>
             )}
           </div>
@@ -503,28 +533,27 @@ const ITAdminDashboard = () => {
           </div>
         </div>
 
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
-            <h3 className="font-semibold flex items-center gap-2"><Activity size={18} className="text-cyan-400" /> Recent Alerts</h3>
-            <button className="text-xs bg-dark-600 hover:bg-dark-500 border border-dark-500 text-gray-300 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"><CheckCircle size={13}/> Acknowledge All</button>
+        <div className="glass-panel rounded-2xl overflow-hidden mt-6">
+          <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex justify-between items-center">
+            <h3 className="font-semibold flex items-center gap-2 dark:text-white text-gray-900"><Activity size={18} className="text-cyan-500" /> Recent Alerts</h3>
+            <button className="text-[10px] font-bold uppercase tracking-wider dark:bg-dark-600 bg-white hover:dark:bg-dark-500 hover:bg-gray-50 dark:border-dark-500 border-gray-200 dark:text-gray-300 text-gray-600 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 shadow-sm border"><CheckCircle size={13}/> Acknowledge All</button>
           </div>
           {isLoading ? <Spinner /> : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="text-xs text-gray-400 bg-dark-800/60">
-                  <tr>{['Severity','Type','Message','Time','Status'].map(h=><th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr>
+                <thead className="text-[10px] font-bold uppercase tracking-wider dark:text-gray-400 text-gray-500 dark:bg-dark-800/60 bg-gray-50">
+                  <tr>{['Severity','Type','Message','Time','Status'].map(h=><th key={h} className="px-5 py-3">{h}</th>)}</tr>
                 </thead>
-                <tbody className="divide-y divide-dark-700/50">
+                <tbody className="divide-y dark:divide-dark-700/50 divide-gray-100">
                   {(recent??[]).slice(0,15).map((a:any,i:number)=>(
-                    <tr key={i} className="hover:bg-dark-800/50 transition-colors">
+                    <tr key={i} className="dark:hover:bg-dark-800/50 hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3"><SeverityBadge severity={a.severity}/></td>
-                      <td className="px-5 py-3 text-xs text-brand uppercase tracking-wide">{a.type}</td>
-                      <td className="px-5 py-3 text-sm text-gray-200 max-w-md truncate">{a.message}</td>
-                      <td className="px-5 py-3 text-xs text-gray-500">{new Date(a.timestamp || a.created_at).toLocaleString()}</td>
-                      <td className="px-5 py-3"><span className={`text-xs px-2 py-0.5 rounded border ${a.status==='active'?'bg-red-500/10 text-red-400 border-red-500/30':'bg-green-500/10 text-green-400 border-green-500/30'}`}>{a.status}</span></td>
+                      <td className="px-5 py-3 text-[10px] font-bold text-brand uppercase tracking-widest">{a.type}</td>
+                      <td className="px-5 py-3 text-sm font-medium dark:text-gray-200 text-gray-800 max-w-md truncate">{a.message}</td>
+                      <td className="px-5 py-3 text-xs dark:text-gray-500 text-gray-400">{new Date(a.timestamp || a.created_at).toLocaleString()}</td>
+                      <td className="px-5 py-3"><span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border shadow-sm ${a.status==='active'?'bg-red-500/10 text-red-500 border-red-500/30':'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'}`}>{a.status}</span></td>
                     </tr>
                   ))}
-                  {!recent?.length && <tr><td colSpan={5} className="py-12 text-center text-gray-500">No alerts</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -578,10 +607,14 @@ const ResourcesTab = () => {
   });
 
   // SSE — refetch resources when any alert fires
-  React.useEffect(() => {
+  useEffect(() => {
     const sse = new EventSource(`${ALERT_API_BASE}/alerts/stream`);
-    sse.addEventListener('alert', () => setRefreshKey(k => k + 1));
-    return () => sse.close();
+    const handler = () => setRefreshKey(k => k + 1);
+    sse.addEventListener('alert', handler);
+    return () => {
+      sse.removeEventListener('alert', handler);
+      sse.close();
+    };
   }, []);
 
   const allResources: any[] = resources ?? [];
@@ -603,23 +636,23 @@ const ResourcesTab = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Resource Table */}
-        <div className="lg:col-span-2 glass-panel rounded-2xl overflow-hidden flex flex-col">
-          <div className="p-4 border-b border-dark-700 bg-dark-800 flex items-center justify-between flex-wrap gap-3">
+        <div className="lg:col-span-2 glass-panel rounded-2xl overflow-hidden flex flex-col h-full">
+          <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-2">
-              <Server size={17} className="text-cyan-400" />
-              <h3 className="font-semibold text-sm">AWS Resources</h3>
+              <Server size={17} className="text-cyan-500" />
+              <h3 className="font-semibold text-sm dark:text-white text-gray-900">AWS Resources</h3>
               {resLoad && <div className="h-3.5 w-3.5 animate-spin rounded-full border-t border-brand border-r" />}
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-1.5 p-1 dark:bg-dark-900/50 bg-gray-100 rounded-xl border dark:border-dark-700 border-gray-200">
               {types.map(t => (
                 <button key={t} id={`resource-filter-${t}`}
                   onClick={() => setTypeFilter(t)}
-                  className={`px-3 py-1 text-xs font-medium rounded-lg border transition-all ${
+                  className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg border transition-all ${
                     typeFilter === t
-                      ? 'bg-brand/20 text-brand border-brand/30'
-                      : 'bg-dark-700 text-gray-400 border-dark-600 hover:text-gray-200'
+                      ? 'bg-brand text-white border-brand shadow-sm'
+                      : 'dark:text-gray-400 text-gray-500 border-transparent hover:dark:text-gray-200 hover:text-gray-900'
                   }`}>
-                  {t === 'all' ? 'All' : t.toUpperCase()}
+                  {t === 'all' ? 'All' : t}
                 </button>
               ))}
             </div>
@@ -636,39 +669,39 @@ const ResourcesTab = () => {
 
           <div className="overflow-x-auto">
             <table className="w-full text-left">
-              <thead className="text-xs text-gray-400 bg-dark-800/60">
-                <tr>{['Type','Resource ID','IAM User','State','CPU / Size','Last Activity','Est. Cost/mo','Status','Action'].map(h=>(
-                  <th key={h} className="px-4 py-3 font-medium whitespace-nowrap">{h}</th>
+              <thead className="text-[10px] font-bold uppercase tracking-wider dark:text-gray-400 text-gray-500 dark:bg-dark-800/60 bg-gray-50/50">
+                <tr>{['Type','Resource ID','IAM User','State','CPU / Size','Activity','Cost/mo','Status','Action'].map(h=>(
+                  <th key={h} className="px-4 py-3 whitespace-nowrap">{h}</th>
                 ))}</tr>
               </thead>
-              <tbody className="divide-y divide-dark-700/50">
+              <tbody className="divide-y dark:divide-dark-700/50 divide-gray-100">
                 {allResources.map((r: any, i: number) => (
-                  <tr key={i} className={`hover:bg-dark-800/50 transition-colors ${r.idle ? 'bg-amber-900/10' : ''}`}>
+                  <tr key={i} className={`dark:hover:bg-dark-800/50 hover:bg-gray-50 transition-colors ${r.idle ? 'dark:bg-amber-900/10 bg-amber-50/50' : ''}`}>
                     <td className="px-4 py-3"><ResourceTypeBadge type={r.type} /></td>
-                    <td className="px-4 py-3 text-xs text-gray-200 font-mono max-w-[160px] truncate" title={r.resource_id}>{r.name || r.resource_id}</td>
+                    <td className="px-4 py-3 text-[11px] dark:text-gray-200 text-gray-800 font-mono max-w-[140px] truncate" title={r.resource_id}>{r.name || r.resource_id}</td>
                     <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-dark-700 border border-dark-600 text-xs font-medium text-gray-300">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md dark:bg-dark-700 bg-gray-100 border dark:border-dark-600 border-gray-200 text-[10px] font-bold dark:text-gray-300 text-gray-600 uppercase">
                         <Users size={12} className="text-brand opacity-70" />
                         {r.iam_user || 'Unknown'}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded border ${r.state === 'running' || r.state === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-gray-500/10 text-gray-400 border-gray-500/30'}`}>{r.state}</span>
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border shadow-sm ${r.state === 'running' || r.state === 'active' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' : 'dark:bg-gray-500/10 bg-gray-100 dark:text-gray-400 text-gray-500 border-gray-500/30'}`}>{r.state}</span>
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-300">
-                      {r.cpu != null ? `${r.cpu}% CPU` : r.size_mb != null ? `${r.size_mb} MB` : '—'}
+                    <td className="px-4 py-3 text-[11px] font-medium dark:text-gray-300 text-gray-600 tracking-tight">
+                      {r.cpu != null ? <span className={Number(r.cpu) > 80 ? 'text-red-500' : ''}>{r.cpu}% CPU</span> : r.size_mb != null ? `${r.size_mb} MB` : '—'}
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-400">{r.last_activity ? new Date(r.last_activity).toLocaleDateString() : '—'}</td>
-                    <td className="px-4 py-3 text-xs font-semibold text-gray-200">{Number(r.estimated_cost) > 0 ? `$${Number(r.estimated_cost).toFixed(2)}` : 'Free'}</td>
+                    <td className="px-4 py-3 text-[11px] dark:text-gray-500 text-gray-400">{r.last_activity ? new Date(r.last_activity).toLocaleDateString() : '—'}</td>
+                    <td className="px-4 py-3 text-[11px] font-bold dark:text-gray-200 text-gray-800">{Number(r.estimated_cost) > 0 ? `$${Number(r.estimated_cost).toFixed(2)}` : <span className="text-emerald-500">Free</span>}</td>
                     <td className="px-4 py-3"><IdleBadge idle={r.idle} /></td>
                     <td className="px-4 py-3">
                       {r.idle ? (
                         <button id={`action-${r.resource_id}`}
-                          className="text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-lg transition-colors whitespace-nowrap"
+                          className="text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-lg transition-all shadow-sm"
                           title={r.recommendation ?? ''}>
                           Optimize
                         </button>
-                      ) : <span className="text-xs text-gray-600">—</span>}
+                      ) : <span className="text-xs text-gray-400 opacity-30">—</span>}
                     </td>
                   </tr>
                 ))}
@@ -725,14 +758,14 @@ const CloudAdminDashboard = () => {
       <div className="space-y-6 animate-in fade-in duration-500">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><Crown className="text-yellow-400" /> Cloud Administration</h1>
-            <p className="text-gray-400 text-sm">Full platform visibility · Resource monitoring · User management</p>
+            <h1 className="text-3xl font-bold flex items-center gap-3 mb-1 dark:text-white text-gray-900"><Crown className="text-yellow-500" /> Cloud Administration</h1>
+            <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Full platform visibility · Resource monitoring · User management</p>
           </div>
-          <div className="flex bg-dark-800 border border-dark-600 rounded-xl p-1 gap-1">
+          <div className="flex dark:bg-dark-800 bg-gray-50 border dark:border-dark-600 border-gray-200 rounded-xl p-1 gap-1 shadow-sm">
             {(['overview','resources','users'] as const).map(t=>(
               <button key={t} id={`admin-tab-${t}`} onClick={()=>setTab(t)}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab===t?'bg-brand text-white shadow-sm':'text-gray-400 hover:text-gray-200'}`}>
-                {t==='overview' ? 'Overview' : t==='resources' ? '🔍 Resources' : 'User Mgmt'}
+                className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${tab===t?'bg-brand text-white shadow-sm':'dark:text-gray-400 text-gray-500 hover:dark:text-gray-200 hover:text-gray-900'}`}>
+                {t==='overview' ? 'Overview' : t==='resources' ? '🔍 Resources' : 'Users'}
               </button>
             ))}
           </div>
@@ -751,10 +784,21 @@ const CloudAdminDashboard = () => {
             )}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 glass-panel rounded-2xl p-6">
-                <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-brand"/>Cost Trend — Last 30 Days</h3>
+                <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><BarChart2 size={18} className="text-brand"/>Cost Trend — Last 30 Days</h3>
                 {tdLoad ? <Spinner /> : (
                   <div className="h-52">
-                    <Line data={trendChart} options={{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{grid:{color:'#1f2937'},ticks:{color:'#9ca3af'}}, x:{grid:{display:false},ticks:{color:'#9ca3af',maxTicksLimit:8}} } }} />
+                    <Line 
+                      data={trendChart} 
+                      options={{ 
+                        responsive:true, 
+                        maintainAspectRatio:false, 
+                        plugins:{legend:{display:false}}, 
+                        scales:{ 
+                          y:{ grid:{color:theme === 'dark' ? '#1f2937' : '#e5e7eb'}, ticks:{color:theme === 'dark' ? '#9ca3af' : '#6b7280', font:{size:10}} }, 
+                          x:{ grid:{display:false}, ticks:{color:theme === 'dark' ? '#9ca3af' : '#6b7280', maxTicksLimit:8, font:{size:10}} } 
+                        } 
+                      }} 
+                    />
                   </div>
                 )}
               </div>
@@ -781,41 +825,41 @@ const CloudAdminDashboard = () => {
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
               <div className="glass-panel rounded-2xl p-6">
-                  <h3 className="font-semibold mb-4 flex items-center gap-2"><DollarSign size={18} className="text-emerald-400"/>FinOps Resource Summary</h3>
+                  <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><DollarSign size={18} className="text-emerald-500"/>FinOps Resource Summary</h3>
                   {fResLoad ? <Spinner /> : (
                     <div className="space-y-4">
-                      <div className="flex justify-between items-center p-3 bg-dark-800 rounded-lg border border-dark-600">
-                        <span className="text-gray-400">Total Running Cost</span>
-                        <span className="text-xl font-bold text-white">${(finRes?.total_cost??0).toFixed(2)}</span>
+                      <div className="flex justify-between items-center p-3 dark:bg-dark-800 bg-gray-50 rounded-lg border dark:border-dark-600 border-gray-100 shadow-sm">
+                        <span className="dark:text-gray-400 text-gray-500 font-medium">Total Running Cost</span>
+                        <span className="text-xl font-bold dark:text-white text-gray-900">${(finRes?.total_cost??0).toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between items-center p-3 bg-dark-800 rounded-lg border border-dark-600">
-                        <span className="text-gray-400">Total Idle Cost</span>
-                        <span className="text-xl font-bold text-amber-400">${(finRes?.idle_cost??0).toFixed(2)}</span>
+                      <div className="flex justify-between items-center p-3 dark:bg-dark-800 bg-gray-50 rounded-lg border dark:border-dark-600 border-gray-100 shadow-sm">
+                        <span className="dark:text-gray-400 text-gray-500 font-medium">Total Idle Cost</span>
+                        <span className="text-xl font-bold text-amber-500 dark:text-amber-400">${(finRes?.idle_cost??0).toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between items-center p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30">
-                        <span className="text-emerald-400 font-medium">Potential Savings</span>
-                        <span className="text-xl font-bold text-emerald-400">${(finRes?.potential_savings??0).toFixed(2)}</span>
+                      <div className="flex justify-between items-center p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30 shadow-sm">
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider text-xs">Potential Savings</span>
+                        <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">${(finRes?.potential_savings??0).toFixed(2)}</span>
                       </div>
                     </div>
                   )}
               </div>
               
               <div className="glass-panel rounded-2xl p-6 overflow-hidden flex flex-col h-full max-h-80">
-                  <h3 className="font-semibold mb-4 flex items-center gap-2"><Users size={18} className="text-brand"/>User Resource Leaderboard</h3>
+                  <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><Users size={18} className="text-brand"/>Leaderboard</h3>
                   {uLoad ? <Spinner /> : (
-                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 scrollbar-thin scrollbar-thumb-dark-600">
-                      {!(usum?.length) ? <p className="text-gray-500 text-sm text-center py-4">No data collected yet</p> : (usum).map((u:any, i:number) => (
-                         <div key={i} className="flex flex-col gap-2 p-3 bg-dark-800 rounded-lg border border-dark-600 hover:border-brand/30 transition-colors">
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-dark-600">
+                      {!(usum?.length) ? <p className="text-gray-500 text-sm text-center py-4 italic">No data collected yet</p> : (usum).map((u:any, i:number) => (
+                         <div key={i} className="flex flex-col gap-2 p-3 dark:bg-dark-800 bg-white rounded-lg border dark:border-dark-600 border-gray-100 hover:border-brand/30 transition-all shadow-sm">
                            <div className="flex justify-between items-center">
                              <div className="flex items-center gap-2">
-                               <div className="w-6 h-6 rounded-full bg-brand/20 border border-brand/30 flex items-center justify-center text-brand text-xs font-bold shrink-0">{u.iam_user.charAt(0).toUpperCase()}</div>
-                               <span className="text-sm font-medium text-gray-200 truncate max-w-[150px]">{u.iam_user}</span>
+                               <div className="w-6 h-6 rounded-full bg-brand/10 border border-brand/20 flex items-center justify-center text-brand text-[10px] font-bold shrink-0 shadow-sm">{u.iam_user.charAt(0).toUpperCase()}</div>
+                               <span className="text-sm font-semibold dark:text-gray-200 text-gray-800 truncate max-w-[150px]">{u.iam_user}</span>
                              </div>
-                             <span className="text-sm font-bold text-emerald-400">${u.total_cost.toFixed(2)}</span>
+                             <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">${u.total_cost.toFixed(0)}</span>
                            </div>
-                           <div className="flex justify-between text-xs text-gray-500">
-                             <span>{u.resource_count} Total Resources</span>
-                             <span className={u.idle_resources > 0 ? "text-amber-400 font-medium" : ""}>{u.idle_resources} Idle resources</span>
+                           <div className="flex justify-between text-[10px] font-medium dark:text-gray-500 text-gray-400 uppercase tracking-tight">
+                             <span>{u.resource_count} resources</span>
+                             <span className={u.idle_resources > 0 ? "text-amber-600 dark:text-amber-400" : ""}>{u.idle_resources} idle</span>
                            </div>
                          </div>
                       ))}
@@ -904,48 +948,48 @@ const LoginScreen = ({ onLogin }: { onLogin: (token: string, role: string, email
   };
 
   return (
-    <div className="h-screen w-full flex items-center justify-center bg-dark-900 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-brand/5 via-dark-900 to-dark-900" />
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand/5 rounded-full blur-3xl" />
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
+    <div className="h-screen w-full flex items-center justify-center dark:bg-dark-900 bg-gray-50 relative overflow-hidden transition-all">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] dark:from-brand/5 from-brand/10 dark:via-dark-900 via-transparent to-transparent" />
+      <div className="absolute top-1/4 left-1/4 w-96 h-96 dark:bg-brand/5 bg-brand/10 rounded-full blur-3xl" />
+      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 dark:bg-purple-500/5 bg-purple-500/10 rounded-full blur-3xl" />
 
       <div className="relative z-10 w-full max-w-md px-4">
         <div className="text-center mb-8">
-          <div className="inline-flex p-3 bg-brand/20 border border-brand/30 rounded-2xl mb-4">
+          <div className="inline-flex p-3 bg-brand/10 border border-brand/20 rounded-2xl mb-4 shadow-xl backdrop-blur-sm">
             <Cloud size={32} className="text-brand" />
           </div>
-          <h1 className="text-3xl font-bold text-white mb-1">CloudGuard</h1>
-          <p className="text-gray-400 text-sm">Cloud Governance Platform</p>
+          <h1 className="text-3xl font-bold dark:text-white text-gray-900 mb-1">CloudGuard</h1>
+          <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Governance & FinOps Platform</p>
         </div>
 
-        <div className="glass-panel rounded-2xl p-8 border dark:border-dark-700 border-gray-200 shadow-2xl">
-          <h2 className="text-lg font-semibold dark:text-white text-gray-900 mb-6">Sign in to your account</h2>
-          {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl mb-4 text-sm">{error}</div>}
+        <div className="glass-panel rounded-2xl p-8 border dark:border-dark-700 border-gray-200/50 shadow-2xl">
+          <h2 className="text-lg font-bold dark:text-white text-gray-800 mb-6">Sign in to your account</h2>
+          {error && <div className="bg-red-500/10 border border-red-500/30 text-red-500 dark:text-red-400 px-4 py-3 rounded-xl mb-4 text-sm font-medium">{error}</div>}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Email</label>
+              <label className="block text-[10px] dark:text-gray-400 text-gray-500 font-bold mb-1.5 uppercase tracking-widest">Email Address</label>
               <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20 transition-all" />
+                className="w-full dark:bg-dark-800 bg-white border dark:border-dark-600 border-gray-200 rounded-xl px-4 py-3 dark:text-white text-gray-900 text-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/10 transition-all shadow-sm" />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Password</label>
+              <label className="block text-[10px] dark:text-gray-400 text-gray-500 font-bold mb-1.5 uppercase tracking-widest">Password</label>
               <input type="password" value={password} onChange={e=>setPassword(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20 transition-all" />
+                className="w-full dark:bg-dark-800 bg-white border dark:border-dark-600 border-gray-200 rounded-xl px-4 py-3 dark:text-white text-gray-900 text-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/10 transition-all shadow-sm" />
             </div>
             <button type="submit" disabled={loading}
-              className="w-full bg-brand hover:bg-blue-500 text-white font-semibold py-2.5 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-2">
-              {loading ? <><div className="animate-spin rounded-full h-4 w-4 border-t-2 border-white/50 border-r-2" /> Signing in…</> : 'Sign In'}
+              className="w-full bg-brand hover:bg-blue-600 text-white font-bold py-3 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-2 shadow-lg shadow-brand/20">
+              {loading ? <><div className="animate-spin rounded-full h-4 w-4 border-t-2 border-white/50 border-r-2" /> Authenticating…</> : 'Sign In to CloudGuard'}
             </button>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-dark-700">
-            <p className="text-xs text-gray-500 mb-3 font-medium uppercase tracking-wider">Quick login (pwd: admin123)</p>
-            <div className="grid grid-cols-2 gap-2">
+          <div className="mt-8 pt-6 border-t dark:border-dark-700 border-gray-100">
+            <p className="text-[10px] dark:text-gray-500 text-gray-400 mb-4 font-bold uppercase tracking-widest">Quick Developer Access</p>
+            <div className="grid grid-cols-2 gap-3">
               {roles.map(r=>(
                 <button key={r.email} onClick={()=>setEmail(r.email)}
-                  className="text-xs bg-dark-700 hover:bg-dark-600 border border-dark-600 text-gray-300 px-3 py-2 rounded-lg transition-colors text-left">
-                  <span className="block font-medium">{r.label}</span>
-                  <span className="text-gray-500 truncate block">{r.email}</span>
+                  className="text-[11px] font-medium dark:bg-dark-700 bg-gray-50 hover:dark:bg-dark-600 hover:bg-gray-100 border dark:border-dark-600 border-gray-200 dark:text-gray-300 text-gray-700 px-3 py-2.5 rounded-xl transition-all text-left shadow-sm">
+                  <span className="block font-bold mb-0.5">{r.label}</span>
+                  <span className="dark:text-gray-500 text-gray-400 truncate block text-[10px]">{r.email}</span>
                 </button>
               ))}
             </div>
