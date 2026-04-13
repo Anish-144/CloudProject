@@ -80,6 +80,7 @@ class AlertPayload(BaseModel):
     type: str
     message: str
     resource_id: Optional[str] = None
+    aws_resource_id: Optional[str] = None
     timestamp: Optional[str] = None
     details: Optional[dict] = {}
     iam_user: Optional[str] = None
@@ -90,7 +91,22 @@ class AlertPayload(BaseModel):
 async def lifespan(app: FastAPI):
     global redis_client
     logger.info("Alert Service starting...")
-    await database.connect()
+    
+    # Retry logic for database connection
+    max_retries = 5
+    retry_interval = 2
+    for i in range(max_retries):
+        try:
+            await database.connect()
+            logger.info("Database connected.")
+            break
+        except Exception as e:
+            if i == max_retries - 1:
+                logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
+                raise
+            logger.warning(f"Database connection attempt {i+1} failed ({e}). Retrying in {retry_interval}s...")
+            await asyncio.sleep(retry_interval)
+            
     redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
     logger.info("Connected to DB and Redis.")
     
@@ -214,28 +230,54 @@ async def get_alerts(limit: int = 50, offset: int = 0):
 
 
 @app.get("/alerts/stream")
-async def alerts_stream():
-    """Server-sent events for real-time alerts."""
+async def alerts_stream(request: Request):
+    """Server-sent events for real-time alerts with 15-second keepalive pings."""
     async def event_generator():
         pubsub = redis_client.pubsub()
         await pubsub.subscribe("alerts_stream")
         logger.info("SSE client connected to alerts_stream")
-        
+        last_ping = asyncio.get_event_loop().time()
+
         try:
             while True:
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    logger.info("SSE client disconnected")
+                    break
+
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
                 if message:
-                    data = json.loads(message["data"])
-                    # Add created_at for frontend
-                    data["created_at"] = data["timestamp"]
-                    yield f"event: alert\ndata: {json.dumps(data)}\n\n"
+                    try:
+                        data = json.loads(message["data"])
+                        data["created_at"] = data.get("timestamp", datetime.utcnow().isoformat())
+                        yield f"event: alert\ndata: {json.dumps(data)}\n\n"
+                    except Exception as e:
+                        logger.error(f"SSE message parse error: {e}")
+
+                # Send heartbeat every 15 seconds to keep connection alive
+                now = asyncio.get_event_loop().time()
+                if now - last_ping >= 15:
+                    yield f"event: ping\ndata: {{\"ts\": \"{datetime.utcnow().isoformat()}\"}}\n\n"
+                    last_ping = now
+
                 await asyncio.sleep(0.1)
         except Exception as e:
-            logger.error(f"SSE error: {e}")
+            logger.error(f"SSE generator error: {e}")
         finally:
-            await pubsub.close()
-    
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+            try:
+                await pubsub.close()
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ─── Auto-Remediation Simulation ─────────────────────────────

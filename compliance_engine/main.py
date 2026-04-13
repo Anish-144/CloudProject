@@ -9,7 +9,7 @@ from databases import Database
 import httpx
 from fastapi import FastAPI
 import uvicorn
-import redis.asyncio as redis
+import redis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -134,7 +134,7 @@ async def record_violation(db: Database, resource_id: str, rule: dict, log: dict
     return severity
 
 
-async def publish_alert(redis_client, resource_id: str, rule: dict, severity: str, score: float, iam_user: str = None):
+async def publish_alert(redis_client: redis.Redis, resource_id: str, rule: dict, severity: str, score: float, iam_user: str = None):
     payload = {
         "severity": severity.upper(),
         "type": "COMPLIANCE",
@@ -151,7 +151,7 @@ async def publish_alert(redis_client, resource_id: str, rule: dict, severity: st
         "iam_user": iam_user,
     }
     try:
-        await redis_client.publish("alerts_stream", json.dumps(payload))
+        redis_client.publish("alerts_stream", json.dumps(payload))
     except Exception as e:
         logger.error(f"Failed to publish compliance alert: {e}")
 
@@ -206,9 +206,23 @@ async def main():
     asyncio.create_task(run_health_server())
 
     db = Database(DATABASE_URL)
-    await db.connect()
+    
+    # Retry logic for database connection
+    max_retries = 5
+    retry_interval = 2
+    for i in range(max_retries):
+        try:
+            await db.connect()
+            logger.info("Database connected.")
+            break
+        except Exception as e:
+            if i == max_retries - 1:
+                logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
+                raise
+            logger.warning(f"Database connection attempt {i+1} failed ({e}). Retrying in {retry_interval}s...")
+            await asyncio.sleep(retry_interval)
 
-    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
     # Cache rules in memory (refresh every 60s)
     rules = await get_active_rules(db)

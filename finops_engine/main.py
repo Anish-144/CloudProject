@@ -8,7 +8,7 @@ from databases import Database
 import httpx
 from fastapi import FastAPI
 import uvicorn
-import redis.asyncio as redis
+import redis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -23,32 +23,53 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 # ─── FinOps Detection Rules ───────────────────────────────────
 
 def detect_idle_resource(log: dict, metrics: dict) -> Optional[dict]:
-    """Detect resources with CPU < 5% average over 7 days."""
-    avg_cpu_7d = metrics.get("avg_cpu_7d") if metrics.get("avg_cpu_7d") is not None else 100
-    if avg_cpu_7d < 5:
-        avg_cost_30d = metrics.get("avg_cost_30d") or 0
-        estimated_savings = avg_cost_30d * 0.8  # 80% savings potential
-        return {
-            "waste_type": "idle_resource",
-            "estimated_savings": round(estimated_savings, 2),
-            "severity": "high" if estimated_savings > 500 else "medium",
-            "details": {
-                "avg_cpu_7d": round(avg_cpu_7d, 2),
-                "threshold_cpu": 5,
-                "avg_monthly_cost": round(avg_cost_30d * 30, 2),
-            }
+    """Detect resources that are idle (CPU < 5% or specific unused flags)."""
+    avg_cpu_7d = metrics.get("avg_cpu_7d", 100)
+    resource_type = log.get("resource_type", "ec2")
+    aws_id = log.get("aws_resource_id", "unknown")
+    idle_flag = log.get("idle", False)
+
+    waste_type = "idle_resource"
+    message_suffix = ""
+    estimated_savings = metrics.get("avg_cost_30d", 0) * 0.8  # Default 80%
+
+    if resource_type == "s3":
+        if idle_flag:
+            waste_type = "idle_s3_bucket"
+            message_suffix = f" (no recent activity or empty)"
+            estimated_savings = max(estimated_savings, 1.0) # Nominal $1/mo for visibility
+    elif resource_type == "lambda":
+        if idle_flag:
+            waste_type = "unused_lambda_function"
+            message_suffix = f" (no recent invocations)"
+            estimated_savings = max(estimated_savings, 0.5) # Nominal $0.5/mo for visibility
+    elif avg_cpu_7d < 5:
+        waste_type = "idle_ec2_instance"
+        message_suffix = f" (CPU avg {round(avg_cpu_7d, 1)}%)"
+    else:
+        return None
+
+    return {
+        "waste_type": waste_type,
+        "estimated_savings": round(estimated_savings, 2),
+        "severity": "high" if estimated_savings > 100 else "medium",
+        "details": {
+            "avg_cpu_7d": round(avg_cpu_7d, 2),
+            "resource_type": resource_type,
+            "aws_resource_id": aws_id,
+            "message_suffix": message_suffix,
         }
-    return None
+    }
 
 
 def detect_overprovisioned(log: dict, metrics: dict) -> Optional[dict]:
     """Detect resources where allocated > 2x average usage."""
-    cpu_usage = log.get("cpu_usage") or 0
-    avg_cpu = metrics.get("avg_cpu_30d") or 50
-    avg_cost_30d = metrics.get("avg_cost_30d") or 0
+    cpu_usage = log.get("cpu_usage", 50)
+    memory_usage = log.get("memory_usage", 50)
+    avg_cpu = metrics.get("avg_cpu_30d", 50)
 
     if avg_cpu > 0 and cpu_usage > (avg_cpu * 2):
-        estimated_savings = avg_cost_30d * 0.3  # 30% savings
+        estimated_savings = metrics.get("avg_cost_30d", 0) * 0.3  # 30% savings
         return {
             "waste_type": "overprovisioned",
             "estimated_savings": round(estimated_savings, 2),
@@ -65,10 +86,10 @@ def detect_overprovisioned(log: dict, metrics: dict) -> Optional[dict]:
 
 def detect_cost_spike(log: dict, metrics: dict) -> Optional[dict]:
     """Detect >20% cost increase month-over-month."""
-    avg_cost_30d = metrics.get("avg_cost_30d") or 0
-    avg_cost_prev_30d = metrics.get("avg_cost_prev_30d") or avg_cost_30d
+    avg_cost_30d = metrics.get("avg_cost_30d", 0)
+    avg_cost_prev_30d = metrics.get("avg_cost_prev_30d", avg_cost_30d)
 
-    if avg_cost_prev_30d and avg_cost_prev_30d > 0:
+    if avg_cost_prev_30d > 0:
         change_pct = ((avg_cost_30d - avg_cost_prev_30d) / avg_cost_prev_30d) * 100
         if change_pct > 20:
             estimated_savings = (avg_cost_30d - avg_cost_prev_30d) * 30
@@ -189,19 +210,24 @@ async def store_log(db: Database, log: dict, resource_id: str):
 
 # ─── Alert Publisher ──────────────────────────────────────────
 
-async def publish_alert(redis_client, resource_id: str, finding: dict, iam_user: str = None):
+async def publish_alert(redis_client: redis.Redis, resource_id: str, finding: dict, iam_user: str = None, aws_id: str = None):
+    display_id = aws_id if aws_id else resource_id
+    waste_name = finding['waste_type'].replace('_', ' ').title()
+    suffix = finding.get("details", {}).get("message_suffix", "")
+    
     payload = {
         "severity": finding["severity"].upper(),
         "type": "FINOPS",
-        "message": f"[FinOps] {finding['waste_type'].replace('_', ' ').title()} detected on resource {resource_id}",
+        "message": f"[FinOps] {waste_name} detected: {display_id}{suffix}",
         "resource_id": resource_id,
+        "aws_resource_id": aws_id,
         "timestamp": datetime.utcnow().isoformat(),
         "details": finding,
         "iam_user": iam_user,
     }
     try:
-        await redis_client.publish("alerts_stream", json.dumps(payload))
-        logger.info(f"Alert published: {finding['waste_type']} for {resource_id}")
+        redis_client.publish("alerts_stream", json.dumps(payload))
+        logger.info(f"Alert published: {finding['waste_type']} for {display_id}")
     except Exception as e:
         logger.error(f"Failed to publish alert: {e}")
 
@@ -250,7 +276,7 @@ async def normalize_user_activity(db: Database, log: dict):
 
 # ─── Per-User Threshold Checking ──────────────────────────────
 
-async def check_user_thresholds(db: Database, redis_client, iam_user: str, log: dict):
+async def check_user_thresholds(db: Database, redis_client: redis.Redis, iam_user: str, log: dict):
     """Check budget and cost_spike thresholds for a specific IAM user."""
 
     # Calculate current user total cost (last 30 days)
@@ -306,11 +332,12 @@ async def process_log(db: Database, redis_client: redis.Redis, log: dict):
     metrics = await get_resource_metrics(db, resource_id)
 
     # Step 3: Existing detection rules
+    aws_id = log.get("aws_resource_id")
     detectors = [detect_idle_resource, detect_overprovisioned, detect_cost_spike]
     for detector in detectors:
         finding = detector(log, metrics)
         if finding:
-            await publish_alert(redis_client, resource_id, finding, iam_user=iam_user)
+            await publish_alert(redis_client, resource_id, finding, iam_user=iam_user, aws_id=aws_id)
 
     # Step 4: Per-user threshold checks
     if iam_user:
@@ -338,9 +365,23 @@ async def main():
     asyncio.create_task(run_health_server())
 
     db = Database(DATABASE_URL)
-    await db.connect()
+    
+    # Retry logic for database connection
+    max_retries = 5
+    retry_interval = 2
+    for i in range(max_retries):
+        try:
+            await db.connect()
+            logger.info("Database connected.")
+            break
+        except Exception as e:
+            if i == max_retries - 1:
+                logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
+                raise
+            logger.warning(f"Database connection attempt {i+1} failed ({e}). Retrying in {retry_interval}s...")
+            await asyncio.sleep(retry_interval)
 
-    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
     logger.info("Polling incoming_logs in PostgreSQL...")
     while True:

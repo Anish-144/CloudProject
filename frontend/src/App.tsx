@@ -75,6 +75,14 @@ const fetchAlerts    = (limit = 20) => axios.get(`${API_BASE}/alerts?limit=${lim
 const fetchAlertSummary = () => axios.get(`${ALERT_API_BASE}/alerts/summary`).then(r => r.data);
 const fetchRecentAlerts = () => axios.get(`${ALERT_API_BASE}/alerts/recent`).then(r => r.data);
 const fetchAdminUsers = () => axios.get(`${API_BASE}/admin/users`).then(r => r.data);
+const fetchAdminOverview = () => axios.get(`${API_BASE}/admin/overview`).then(r => r.data);
+const fetchAdminResources = (type?: string) => {
+  const params = type ? `?resource_type=${type}` : '';
+  return axios.get(`${API_BASE}/admin/resources${params}`).then(r => r.data);
+};
+const fetchFinOpsResourceSummary = () => axios.get(`${API_BASE}/finops/resource-summary`).then(r => r.data);
+const fetchUserSummary = () => axios.get(`${API_BASE}/admin/user-summary`).then(r => r.data);
+const fetchComplianceSummary = () => axios.get(`${API_BASE}/compliance/summary`).then(r => r.data);
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 const MetricCard = ({ title, value, sub, icon: Icon, color }: any) => (
@@ -506,18 +514,174 @@ const ITAdminDashboard = () => {
 };
 
 // ─── CLOUD ADMIN DASHBOARD ────────────────────────────────────────────────────
+// Resource type badges
+const RESOURCE_ICONS: Record<string, React.ReactNode> = {
+  ec2:    <Server size={12} className="text-cyan-400" />,
+  s3:     <Database size={12} className="text-amber-400" />,
+  lambda: <Activity size={12} className="text-purple-400" />,
+};
+
+const ResourceTypeBadge = ({ type }: { type: string }) => {
+  const c: Record<string,string> = {
+    ec2:    'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
+    s3:     'bg-amber-500/10 text-amber-400 border-amber-500/30',
+    lambda: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded border uppercase ${c[type] ?? 'bg-gray-500/10 text-gray-400 border-gray-500/30'}`}>
+      {RESOURCE_ICONS[type]}{type}
+    </span>
+  );
+};
+
+const IdleBadge = ({ idle }: { idle: boolean }) => idle
+  ? <span className="text-xs font-bold px-2 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/30">IDLE</span>
+  : <span className="text-xs font-bold px-2 py-0.5 rounded border bg-emerald-500/10 text-emerald-400 border-emerald-500/30">ACTIVE</span>;
+
+// Resources Tab
+const ResourcesTab = () => {
+  const [typeFilter, setTypeFilter] = React.useState<string>('all');
+  const [refreshKey, setRefreshKey] = React.useState(0);
+
+  const { data: overview, isLoading: ovLoad } = useQuery({
+    queryKey: ['admin-overview', refreshKey],
+    queryFn: fetchAdminOverview,
+    refetchInterval: 10_000,
+  });
+
+  const { data: resources, isLoading: resLoad } = useQuery({
+    queryKey: ['admin-resources', typeFilter, refreshKey],
+    queryFn: () => fetchAdminResources(typeFilter === 'all' ? undefined : typeFilter),
+    refetchInterval: 30_000,
+  });
+
+  // SSE — refetch resources when any alert fires
+  React.useEffect(() => {
+    const sse = new EventSource(`${ALERT_API_BASE}/alerts/stream`);
+    sse.addEventListener('alert', () => setRefreshKey(k => k + 1));
+    return () => sse.close();
+  }, []);
+
+  const allResources: any[] = resources ?? [];
+  const idleCount = allResources.filter((r: any) => r.idle).length;
+  const types = ['all', 'ec2', 's3', 'lambda'];
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      {ovLoad ? <Spinner /> : (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <MetricCard title="Total Resources"  value={overview?.total_resources ?? 0}    sub="Discovered by collector"  icon={Cloud}       color="text-brand" />
+          <MetricCard title="Running"          value={overview?.running_resources ?? 0}  sub="Currently active"          icon={Server}      color="text-emerald-400" />
+          <MetricCard title="Idle Resources"   value={overview?.idle_resources ?? 0}     sub="Wasting cost right now"   icon={Activity}    color="text-amber-400" />
+          <MetricCard title="Est. Savings"     value={`$${(overview?.estimated_savings ?? 0).toFixed(2)}`} sub="Stop idle to reclaim" icon={DollarSign} color="text-emerald-400" />
+          <MetricCard title="Compliance"       value={`${overview?.compliance_score ?? 0}%`} sub="Policy adherence"     icon={ShieldCheck} color={(overview?.compliance_score ?? 0) > 80 ? 'text-emerald-400' : 'text-orange-400'} />
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Resource Table */}
+        <div className="lg:col-span-2 glass-panel rounded-2xl overflow-hidden flex flex-col">
+          <div className="p-4 border-b border-dark-700 bg-dark-800 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <Server size={17} className="text-cyan-400" />
+              <h3 className="font-semibold text-sm">AWS Resources</h3>
+              {resLoad && <div className="h-3.5 w-3.5 animate-spin rounded-full border-t border-brand border-r" />}
+            </div>
+            <div className="flex gap-1">
+              {types.map(t => (
+                <button key={t} id={`resource-filter-${t}`}
+                  onClick={() => setTypeFilter(t)}
+                  className={`px-3 py-1 text-xs font-medium rounded-lg border transition-all ${
+                    typeFilter === t
+                      ? 'bg-brand/20 text-brand border-brand/30'
+                      : 'bg-dark-700 text-gray-400 border-dark-600 hover:text-gray-200'
+                  }`}>
+                  {t === 'all' ? 'All' : t.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {idleCount > 0 && (
+            <div className="bg-amber-500/8 border-b border-amber-500/20 px-5 py-2.5 flex items-center gap-2">
+              <AlertTriangle size={13} className="text-amber-400 shrink-0" />
+              <p className="text-xs text-amber-300">
+                <strong>{idleCount} idle {idleCount === 1 ? 'resource' : 'resources'}</strong> detected — stopping them could save <strong>${(overview?.estimated_savings ?? 0).toFixed(2)}</strong>/month
+              </p>
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="text-xs text-gray-400 bg-dark-800/60">
+                <tr>{['Type','Resource ID','IAM User','State','CPU / Size','Last Activity','Est. Cost/mo','Status','Action'].map(h=>(
+                  <th key={h} className="px-4 py-3 font-medium whitespace-nowrap">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-dark-700/50">
+                {allResources.map((r: any, i: number) => (
+                  <tr key={i} className={`hover:bg-dark-800/50 transition-colors ${r.idle ? 'bg-amber-900/10' : ''}`}>
+                    <td className="px-4 py-3"><ResourceTypeBadge type={r.type} /></td>
+                    <td className="px-4 py-3 text-xs text-gray-200 font-mono max-w-[160px] truncate" title={r.resource_id}>{r.name || r.resource_id}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-dark-700 border border-dark-600 text-xs font-medium text-gray-300">
+                        <Users size={12} className="text-brand opacity-70" />
+                        {r.iam_user || 'Unknown'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded border ${r.state === 'running' || r.state === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-gray-500/10 text-gray-400 border-gray-500/30'}`}>{r.state}</span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-300">
+                      {r.cpu != null ? `${r.cpu}% CPU` : r.size_mb != null ? `${r.size_mb} MB` : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-400">{r.last_activity ? new Date(r.last_activity).toLocaleDateString() : '—'}</td>
+                    <td className="px-4 py-3 text-xs font-semibold text-gray-200">{Number(r.estimated_cost) > 0 ? `$${Number(r.estimated_cost).toFixed(2)}` : 'Free'}</td>
+                    <td className="px-4 py-3"><IdleBadge idle={r.idle} /></td>
+                    <td className="px-4 py-3">
+                      {r.idle ? (
+                        <button id={`action-${r.resource_id}`}
+                          className="text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-lg transition-colors whitespace-nowrap"
+                          title={r.recommendation ?? ''}>
+                          Optimize
+                        </button>
+                      ) : <span className="text-xs text-gray-600">—</span>}
+                    </td>
+                  </tr>
+                ))}
+                {!resLoad && allResources.length === 0 && (
+                  <tr><td colSpan={8} className="py-16 text-center text-gray-500">
+                    <Cloud size={28} className="mx-auto mb-2 opacity-30" />
+                    No resources found. Collector may still be running its first cycle.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Live Alert Stream */}
+        <div className="h-[560px]"><AlertFeed /></div>
+      </div>
+    </div>
+  );
+};
+
 const CloudAdminDashboard = () => {
-  const [tab, setTab] = useState<'overview'|'users'>('overview');
-  const { data: fp,         isLoading: fpLoad } = useQuery({ queryKey: ['finops'],     queryFn: fetchFinOps });
-  const { data: comp,       isLoading: cpLoad } = useQuery({ queryKey: ['compliance'], queryFn: fetchCompliance });
-  const { data: trends,     isLoading: tdLoad } = useQuery({ queryKey: ['trends'],     queryFn: fetchTrends });
-  const { data: adminUsers, isLoading: auLoad } = useQuery({ queryKey: ['admin-users'],queryFn: fetchAdminUsers, enabled: tab==='users' });
+  const [tab, setTab] = useState<'overview'|'resources'|'users'>('overview');
+  const { data: fp,         isLoading: fpLoad } = useQuery({ queryKey: ['finops'],      queryFn: fetchFinOps });
+  const { data: comp,       isLoading: cpLoad } = useQuery({ queryKey: ['compliance'],  queryFn: fetchCompliance });
+  const { data: trends,     isLoading: tdLoad } = useQuery({ queryKey: ['trends'],      queryFn: fetchTrends });
+  const { data: adminUsers, isLoading: auLoad } = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, enabled: tab === 'users' });
+  const { data: finRes,     isLoading: fResLoad } = useQuery({ queryKey: ['finops-res-sum'], queryFn: fetchFinOpsResourceSummary });
+  const { data: usum,       isLoading: uLoad } = useQuery({ queryKey: ['user-sum'], queryFn: fetchUserSummary });
 
   const nav: NavItem[] = [
-    { path:'/dashboard/admin',      icon:<Crown size={17}/>,       label:'Admin Overview'      },
-    { path:'/dashboard/finops',     icon:<TrendingDown size={17}/>, label:'FinOps'              },
-    { path:'/dashboard/compliance', icon:<ShieldCheck size={17}/>,  label:'Compliance'          },
-    { path:'/dashboard/infra',      icon:<Monitor size={17}/>,      label:'Infrastructure'      },
+    { path:'/dashboard/admin',      icon:<Crown size={17}/>,       label:'Admin Overview' },
+    { path:'/dashboard/finops',     icon:<TrendingDown size={17}/>, label:'FinOps'         },
+    { path:'/dashboard/compliance', icon:<ShieldCheck size={17}/>,  label:'Compliance'     },
+    { path:'/dashboard/infra',      icon:<Monitor size={17}/>,      label:'Infrastructure' },
   ];
 
   const trendChart = {
@@ -537,34 +701,35 @@ const CloudAdminDashboard = () => {
   return (
     <Layout nav={nav}>
       <div className="space-y-6 animate-in fade-in duration-500">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><Crown className="text-yellow-400" /> Cloud Administration</h1>
-            <p className="text-gray-400 text-sm">Full platform visibility · User management · All services</p>
+            <p className="text-gray-400 text-sm">Full platform visibility · Resource monitoring · User management</p>
           </div>
           <div className="flex bg-dark-800 border border-dark-600 rounded-xl p-1 gap-1">
-            {(['overview','users'] as const).map(t=>(
-              <button key={t} onClick={()=>setTab(t)} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab===t?'bg-brand text-white shadow-sm':'text-gray-400 hover:text-gray-200'}`}>
-                {t==='overview'?'Overview':'User Mgmt'}
+            {(['overview','resources','users'] as const).map(t=>(
+              <button key={t} id={`admin-tab-${t}`} onClick={()=>setTab(t)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab===t?'bg-brand text-white shadow-sm':'text-gray-400 hover:text-gray-200'}`}>
+                {t==='overview' ? 'Overview' : t==='resources' ? '🔍 Resources' : 'User Mgmt'}
               </button>
             ))}
           </div>
         </div>
 
+        {/* ── OVERVIEW ── */}
         {tab === 'overview' && (
           <>
             {(fpLoad||cpLoad) ? <Spinner /> : (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <MetricCard title="Savings Potential"   value={`$${(fp?.total_savings_potential??0).toLocaleString()}`} sub="Cloud waste detected"    icon={DollarSign}  color="text-emerald-400"/>
-                <MetricCard title="Compliance Score"    value={`${comp?.overall_score??0}%`}                           sub={`${comp?.active_violations??0} violations`} icon={ShieldCheck} color={comp?.overall_score>80?'text-emerald-400':'text-orange-400'}/>
+                <MetricCard title="Savings Potential"   value={`$${(fp?.total_savings_potential??0).toLocaleString()}`} sub="Cloud waste detected"     icon={DollarSign}   color="text-emerald-400"/>
+                <MetricCard title="Compliance Score"    value={`${comp?.overall_score??0}%`}                           sub={`${comp?.active_violations??0} violations`} icon={ShieldCheck}  color={comp?.overall_score>80?'text-emerald-400':'text-orange-400'}/>
                 <MetricCard title="Critical Violations" value={comp?.critical_violations??0}                           sub="Requires immediate action" icon={AlertTriangle} color="text-red-400"/>
-                <MetricCard title="Idle Resources"      value={fp?.idle_resources??0}                                  sub="Running < 5% CPU"         icon={Activity}    color="text-yellow-400"/>
+                <MetricCard title="Idle Resources"      value={fp?.idle_resources??0}                                  sub="Running < 5% CPU"          icon={Activity}     color="text-yellow-400"/>
               </div>
             )}
-
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 glass-panel rounded-2xl p-6">
-                <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-brand"/> Cost Trend — Last 30 Days</h3>
+                <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-brand"/>Cost Trend — Last 30 Days</h3>
                 {tdLoad ? <Spinner /> : (
                   <div className="h-52">
                     <Line data={trendChart} options={{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{grid:{color:'#1f2937'},ticks:{color:'#9ca3af'}}, x:{grid:{display:false},ticks:{color:'#9ca3af',maxTicksLimit:8}} } }} />
@@ -573,10 +738,9 @@ const CloudAdminDashboard = () => {
               </div>
               <div className="h-80"><AlertFeed /></div>
             </div>
-
             {cpLoad ? null : (
               <div className="glass-panel rounded-2xl p-6">
-                <h3 className="font-semibold mb-4 flex items-center gap-2"><ShieldCheck size={18} className="text-purple-400"/> Compliance by Category</h3>
+                <h3 className="font-semibold mb-4 flex items-center gap-2"><ShieldCheck size={18} className="text-purple-400"/>Compliance by Category</h3>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   {Object.entries(comp?.by_category??{}).map(([cat,val]:any)=>(
                     <div key={cat} className="p-4 bg-dark-800 rounded-xl border border-dark-600">
@@ -592,13 +756,62 @@ const CloudAdminDashboard = () => {
                 </div>
               </div>
             )}
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              <div className="glass-panel rounded-2xl p-6">
+                  <h3 className="font-semibold mb-4 flex items-center gap-2"><DollarSign size={18} className="text-emerald-400"/>FinOps Resource Summary</h3>
+                  {fResLoad ? <Spinner /> : (
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center p-3 bg-dark-800 rounded-lg border border-dark-600">
+                        <span className="text-gray-400">Total Running Cost</span>
+                        <span className="text-xl font-bold text-white">${(finRes?.total_cost??0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between items-center p-3 bg-dark-800 rounded-lg border border-dark-600">
+                        <span className="text-gray-400">Total Idle Cost</span>
+                        <span className="text-xl font-bold text-amber-400">${(finRes?.idle_cost??0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between items-center p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30">
+                        <span className="text-emerald-400 font-medium">Potential Savings</span>
+                        <span className="text-xl font-bold text-emerald-400">${(finRes?.potential_savings??0).toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
+              </div>
+              
+              <div className="glass-panel rounded-2xl p-6 overflow-hidden flex flex-col h-full max-h-80">
+                  <h3 className="font-semibold mb-4 flex items-center gap-2"><Users size={18} className="text-brand"/>User Resource Leaderboard</h3>
+                  {uLoad ? <Spinner /> : (
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 scrollbar-thin scrollbar-thumb-dark-600">
+                      {!(usum?.length) ? <p className="text-gray-500 text-sm text-center py-4">No data collected yet</p> : (usum).map((u:any, i:number) => (
+                         <div key={i} className="flex flex-col gap-2 p-3 bg-dark-800 rounded-lg border border-dark-600 hover:border-brand/30 transition-colors">
+                           <div className="flex justify-between items-center">
+                             <div className="flex items-center gap-2">
+                               <div className="w-6 h-6 rounded-full bg-brand/20 border border-brand/30 flex items-center justify-center text-brand text-xs font-bold shrink-0">{u.iam_user.charAt(0).toUpperCase()}</div>
+                               <span className="text-sm font-medium text-gray-200 truncate max-w-[150px]">{u.iam_user}</span>
+                             </div>
+                             <span className="text-sm font-bold text-emerald-400">${u.total_cost.toFixed(2)}</span>
+                           </div>
+                           <div className="flex justify-between text-xs text-gray-500">
+                             <span>{u.resource_count} Total Resources</span>
+                             <span className={u.idle_resources > 0 ? "text-amber-400 font-medium" : ""}>{u.idle_resources} Idle resources</span>
+                           </div>
+                         </div>
+                      ))}
+                    </div>
+                  )}
+              </div>
+            </div>
           </>
         )}
 
+        {/* ── RESOURCES ── */}
+        {tab === 'resources' && <ResourcesTab />}
+
+        {/* ── USERS ── */}
         {tab === 'users' && (
           <div className="glass-panel rounded-2xl overflow-hidden">
             <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
-              <h3 className="font-semibold flex items-center gap-2"><Users size={18} className="text-yellow-400"/> User Management</h3>
+              <h3 className="font-semibold flex items-center gap-2"><Users size={18} className="text-yellow-400"/>User Management</h3>
               <span className="text-xs text-gray-500">{adminUsers?.length??0} users registered</span>
             </div>
             {auLoad ? <Spinner /> : (
@@ -633,6 +846,8 @@ const CloudAdminDashboard = () => {
     </Layout>
   );
 };
+
+
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
 const LoginScreen = ({ onLogin }: { onLogin: (token: string, role: string, email: string) => void }) => {

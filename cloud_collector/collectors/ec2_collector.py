@@ -39,6 +39,9 @@ class EC2Collector:
                         # An instance is in private subnet if it has no public IP
                         in_private_subnet = not has_public_ip
                         
+                        tags_list = inst.get("Tags", [])
+                        tags_dict = {t["Key"]: t["Value"] for t in tags_list}
+                        
                         instances.append({
                             "aws_resource_id": instance_id,
                             "resource_type": "ec2_instance",
@@ -51,7 +54,8 @@ class EC2Collector:
                                 "public_ip": public_ip,
                                 "private_ip": inst.get("PrivateIpAddress"),
                                 "subnet_id": inst.get("SubnetId"),
-                                "vpc_id": inst.get("VpcId")
+                                "vpc_id": inst.get("VpcId"),
+                                "tags": tags_dict
                             }
                         })
         except Exception as e:

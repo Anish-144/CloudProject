@@ -6,3 +6,4 @@ asyncpg
 boto3
 botocore
 python-dateutil
+redis

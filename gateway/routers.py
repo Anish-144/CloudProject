@@ -12,7 +12,8 @@ from auth import (
 from models import (
     LoginRequest, TokenResponse, LogBatch, IngestResponse,
     AlertOut, FinOpsSummary, ComplianceScore, UserOut,
-    UserActivityOut, ThresholdCreate, ThresholdOut, UserCostOut
+    UserActivityOut, ThresholdCreate, ThresholdOut, UserCostOut,
+    AdminOverview, AdminResource, UserSummaryOut, FinOpsResourceSummaryOut, ComplianceSummaryOut
 )
 from datetime import datetime
 import asyncio
@@ -247,6 +248,23 @@ async def get_top_savings(current_user: dict = Depends(require_finops)):
     return [dict(r) for r in rows]
 
 
+@finops_router.get("/resource-summary", response_model=FinOpsResourceSummaryOut)
+async def get_finops_resource_summary(current_user: dict = Depends(require_finops)):
+    from main import database
+    row = await database.fetch_one("""
+        SELECT
+            COALESCE(SUM(estimated_cost), 0) AS total_cost,
+            COALESCE(SUM(estimated_cost) FILTER (WHERE idle = true), 0) AS idle_cost
+        FROM cloud_resources
+    """)
+    idle_cost = float(row["idle_cost"] or 0)
+    return FinOpsResourceSummaryOut(
+        total_cost=float(row["total_cost"] or 0),
+        idle_cost=idle_cost,
+        potential_savings=idle_cost
+    )
+
+
 @finops_router.get("/user-costs", response_model=list[UserCostOut])
 async def get_user_costs(current_user: dict = Depends(require_finops)):
     """Per-user cost breakdown computed from user_activity_logs + usage_logs."""
@@ -455,6 +473,34 @@ async def get_rules(current_user: dict = Depends(require_compliance)):
     return [dict(r) for r in rows]
 
 
+@compliance_router.get("/summary", response_model=ComplianceSummaryOut)
+async def get_compliance_summary(current_user: dict = Depends(require_compliance)):
+    from main import database
+    row = await database.fetch_one("""
+        SELECT COUNT(DISTINCT resource_id) as risky_users
+        FROM alerts 
+        WHERE message ILIKE '%AdministratorAccess attached%' OR message ILIKE '%overly permissive wildcard policies%'
+    """)
+    risky_users = int(row["risky_users"] or 0)
+    
+    alerts_count = await database.fetch_one("SELECT COUNT(*) FROM alerts WHERE message ILIKE '%MFA%' OR message ILIKE '%AdministratorAccess%' OR type='compliance'")
+    policy_issues = int(alerts_count["count"] or 0)
+    
+    recommendations = []
+    if risky_users > 0:
+        recommendations.append("Revoke AdministratorAccess and overly permissive wildcard policies from identified risky IAM users.")
+    if policy_issues > 0:
+        recommendations.append("Ensure MFA is enabled and root keys are rotated or deleted.")
+    if not recommendations:
+        recommendations.append("No high-priority recommendations at this time.")
+        
+    return ComplianceSummaryOut(
+        risky_users=risky_users,
+        policy_issues=policy_issues,
+        recommendations=recommendations
+    )
+
+
 # ── Admin Router ──────────────────────────────────────────────
 # Protected: cloud_admin, admin ONLY
 admin_router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
@@ -467,6 +513,29 @@ async def list_users(current_user: dict = Depends(require_cloud_admin)):
         "SELECT id, email, role, created_at FROM users ORDER BY created_at DESC"
     )
     return [dict(r) for r in rows]
+
+
+@admin_router.get("/user-summary", response_model=list[UserSummaryOut])
+async def get_user_summary(current_user: dict = Depends(require_cloud_admin)):
+    from main import database
+    rows = await database.fetch_all("""
+        SELECT 
+            COALESCE(iam_user, 'Unknown') as iam_user,
+            COUNT(resource_id) as resource_count,
+            COUNT(resource_id) FILTER (WHERE idle = true) as idle_resources,
+            COALESCE(SUM(estimated_cost), 0) as total_cost
+        FROM cloud_resources
+        GROUP BY COALESCE(iam_user, 'Unknown')
+        ORDER BY total_cost DESC
+    """)
+    return [
+        UserSummaryOut(
+            iam_user=r["iam_user"],
+            resource_count=int(r["resource_count"] or 0),
+            idle_resources=int(r["idle_resources"] or 0),
+            total_cost=float(r["total_cost"] or 0)
+        ) for r in rows
+    ]
 
 
 @admin_router.patch("/users/{user_id}/role")
@@ -485,4 +554,69 @@ async def update_user_role(
         {"role": new_role, "id": user_id}
     )
     return {"message": f"User role updated to '{new_role}'"}
+
+
+@admin_router.get("/overview", response_model=AdminOverview)
+async def get_admin_overview(current_user: dict = Depends(require_cloud_admin)):
+    """High-level resource summary for Cloud Admin dashboard."""
+    from main import database
+
+    # Aggregate from cloud_resources table
+    agg = await database.fetch_one("""
+        SELECT
+            COUNT(*)                                            AS total_resources,
+            COUNT(*) FILTER (WHERE state NOT IN ('stopped','inactive') AND idle = false) AS running_resources,
+            COUNT(*) FILTER (WHERE idle = true)                AS idle_resources,
+            COALESCE(SUM(estimated_cost) FILTER (WHERE idle = true), 0) AS estimated_savings
+        FROM cloud_resources
+    """)
+
+    # Compliance score (reuse existing logic)
+    rules = await database.fetch_one(
+        "SELECT COUNT(*) AS total, SUM(weight) AS total_weight FROM compliance_rules WHERE active = true"
+    )
+    violations = await database.fetch_all("""
+        SELECT cr.weight
+        FROM violations v
+        JOIN compliance_rules cr ON v.rule_id = cr.id
+        WHERE v.status = 'open'
+    """)
+    total_weight   = float(rules["total_weight"] or 100)
+    violated_weight = sum(float(v["weight"]) for v in violations)
+    compliance_score = max(0, 100 - (violated_weight / total_weight * 100)) if total_weight > 0 else 100.0
+
+    return AdminOverview(
+        total_resources   = int(agg["total_resources"] or 0),
+        running_resources = int(agg["running_resources"] or 0),
+        idle_resources    = int(agg["idle_resources"] or 0),
+        estimated_savings = round(float(agg["estimated_savings"] or 0), 2),
+        compliance_score  = round(compliance_score, 1),
+    )
+
+
+@admin_router.get("/resources", response_model=list[AdminResource])
+async def get_admin_resources(
+    resource_type: str = None,
+    idle_only: bool = False,
+    limit: int = 200,
+    current_user: dict = Depends(require_cloud_admin)
+):
+    """Full resource list with idle flags and cost recommendations."""
+    from main import database
+
+    query  = "SELECT * FROM cloud_resources WHERE 1=1"
+    params = {}
+
+    if resource_type:
+        query += " AND type = :type"
+        params["type"] = resource_type.lower()
+
+    if idle_only:
+        query += " AND idle = true"
+
+    query += " ORDER BY idle DESC, estimated_cost DESC LIMIT :limit"
+    params["limit"] = limit
+
+    rows = await database.fetch_all(query, params)
+    return [dict(r) for r in rows]
 

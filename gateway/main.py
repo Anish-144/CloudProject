@@ -1,4 +1,5 @@
 import os
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -24,8 +25,22 @@ database = Database(DATABASE_URL)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting CloudGuard Gateway...")
-    await database.connect()
-    logger.info("Database connected.")
+    
+    # Retry logic for database connection
+    max_retries = 5
+    retry_interval = 2
+    for i in range(max_retries):
+        try:
+            await database.connect()
+            logger.info("Database connected.")
+            break
+        except Exception as e:
+            if i == max_retries - 1:
+                logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
+                raise
+            logger.warning(f"Database connection attempt {i+1} failed ({e}). Retrying in {retry_interval}s...")
+            await asyncio.sleep(retry_interval)
+            
     yield
     await database.disconnect()
     logger.info("Connections closed.")

@@ -178,3 +178,50 @@ class UserCostOut(BaseModel):
     total_cost_30d: float
     resource_count: int
     avg_daily_cost: float
+
+
+# ── Admin Resource Monitoring Models ─────────────────────────
+class AdminOverview(BaseModel):
+    total_resources: int
+    running_resources: int
+    idle_resources: int
+    estimated_savings: float
+    compliance_score: float
+
+
+class AdminResource(BaseModel):
+    resource_id: str
+    type: str
+    name: Optional[str] = None
+    state: str
+    region: Optional[str] = None
+    cpu: Optional[float] = None
+    size_mb: Optional[float] = None
+    last_activity: Optional[datetime] = None
+    estimated_cost: float = 0.0
+    idle: bool = False
+    recommendation: Optional[str] = None
+    iam_user: Optional[str] = None
+    last_updated: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UserSummaryOut(BaseModel):
+    iam_user: str
+    resource_count: int
+    idle_resources: int
+    total_cost: float
+
+
+class FinOpsResourceSummaryOut(BaseModel):
+    total_cost: float
+    idle_cost: float
+    potential_savings: float
+
+
+class ComplianceSummaryOut(BaseModel):
+    risky_users: int
+    policy_issues: int
+    recommendations: list[str]

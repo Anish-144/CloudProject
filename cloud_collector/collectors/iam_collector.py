@@ -42,6 +42,27 @@ class IAMCollector:
 
                     is_root = username.lower() == "root"
                     
+                    # Check Policies
+                    has_administrator_access = False
+                    has_wildcard_policy = False
+                    try:
+                        attached = client.list_attached_user_policies(UserName=username)
+                        for policy in attached.get("AttachedPolicies", []):
+                            if policy["PolicyName"] == "AdministratorAccess":
+                                has_administrator_access = True
+                                has_wildcard_policy = True
+                    except Exception as e:
+                        logger.debug(f"Could not get attached policies for {username}: {e}")
+                        
+                    try:
+                        inline = client.list_user_policies(UserName=username)
+                        if inline.get("PolicyNames"):
+                            # If they have inline policies, we flag them for review as potentially overly permissive (wildcards)
+                            # since inline policies bypass standard managed guardrails.
+                            has_wildcard_policy = True
+                    except Exception as e:
+                        logger.debug(f"Could not get inline policies for {username}: {e}")
+                        
                     users_data.append({
                         "aws_resource_id": username,
                         "resource_type": "iam_user",
@@ -50,10 +71,14 @@ class IAMCollector:
                         "mfa_enabled": mfa_enabled,
                         "is_root_account": is_root,
                         "access_key_age_days": access_key_age_days,
+                        "has_administrator_access": has_administrator_access,
+                        "has_wildcard_policy": has_wildcard_policy,
                         "metadata": {
                             "username": username,
                             "arn": user["Arn"],
-                            "create_date": user["CreateDate"].isoformat()
+                            "create_date": user["CreateDate"].isoformat(),
+                            "has_administrator_access": has_administrator_access,
+                            "has_wildcard_policy": has_wildcard_policy
                         }
                     })
         except Exception as e:
