@@ -294,11 +294,27 @@ def get_cloudtrail_mapping(session, region: str) -> dict:
     return mapping
 
 async def clean_stale_resources(db: Database, resource_type: str):
-    """Remove inactive resources that have not been seen in the recent scan."""
+    """Remove inactive resources that have not been seen in the recent scan (within ~10 mins)."""
     try:
-        query = "DELETE FROM cloud_resources WHERE type = :type AND last_seen < NOW() - INTERVAL '1 hour'"
-        await db.execute(query, {"type": resource_type})
-        logger.info(f"Cleaned stale resources for {resource_type}")
+        # 1. Clean cloud_resources (FinOps Dashboard source)
+        q1 = "DELETE FROM cloud_resources WHERE type = :type AND last_seen < NOW() - INTERVAL '10 minutes'"
+        await db.execute(q1, {"type": resource_type})
+        
+        # 2. Clean aws_resources (Primary Boto3 Sync table)
+        q2 = "DELETE FROM aws_resources WHERE resource_type = :type AND last_seen < NOW() - INTERVAL '10 minutes'"
+        await db.execute(q2, {"type": resource_type})
+
+        # 3. Clean orphaned records in the general 'resources' table 
+        # (This avoids dangling IDs that no longer exist in AWS)
+        q3 = """
+            DELETE FROM resources 
+            WHERE cloud_provider = 'aws' 
+              AND resource_type = :type 
+              AND id NOT IN (SELECT resource_id FROM aws_resources WHERE resource_id IS NOT NULL)
+        """
+        await db.execute(q3, {"type": resource_type})
+        
+        logger.info(f"Cleaned stale resources for {resource_type} (10min threshold)")
     except Exception as e:
         logger.error(f"Failed to clean stale resources for {resource_type}: {e}")
 
@@ -758,6 +774,7 @@ async def collect_iam(
                 {"username": user.get('metadata', {}).get('username'), "has_wildcard_policy": True, "account": account_name},
             )
 
+    await clean_stale_resources(db, "iam")
     logger.info(f"IAM cycle complete: {len(users)} users in {account_name}")
 
 
