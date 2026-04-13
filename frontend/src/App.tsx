@@ -120,8 +120,11 @@ const AlertFeed = () => {
   const [items, setItems] = useState<any[]>([]);
   useEffect(() => {
     let alive = true;
+    const token = localStorage.getItem('cloudguard_token');
     axios.get(`${ALERT_API_BASE}/alerts/recent?limit=10`).then(r => { if (alive) setItems(r.data); }).catch(() => {});
-    const sse = new EventSource(`${ALERT_API_BASE}/alerts/stream`);
+    
+    // Pass token in query param for SSE auth
+    const sse = new EventSource(`${ALERT_API_BASE}/alerts/stream?token=${token}`);
     sse.onmessage = e => {
       try {
         const d = JSON.parse(e.data);
@@ -242,6 +245,7 @@ const Layout = ({ children, nav }: { children: React.ReactNode; nav: NavItem[] }
 
 // ─── FINOPS DASHBOARD ─────────────────────────────────────────────────────────
 const FinOpsDashboard = () => {
+  const { theme } = useAuth();
   const { data: fp, isLoading: fpLoad } = useQuery({ queryKey: ['finops'], queryFn: fetchFinOps });
   const { data: trends, isLoading: tdLoad } = useQuery({ queryKey: ['trends'], queryFn: fetchTrends });
   const { data: savings, isLoading: svLoad } = useQuery({ queryKey: ['savings'], queryFn: fetchSavings });
@@ -469,8 +473,8 @@ const ComplianceDashboard = () => {
   );
 };
 
-// ─── IT ADMIN DASHBOARD ───────────────────────────────────────────────────────
 const ITAdminDashboard = () => {
+  const { theme } = useAuth();
   const { data: alerts, isLoading } = useQuery({ queryKey: ['alerts-all'], queryFn: () => fetchAlerts(100) });
   const { data: summary } = useQuery({ queryKey: ['alerts-summary'], queryFn: fetchAlertSummary });
   const { data: recent } = useQuery({ queryKey: ['alerts-recent'], queryFn: fetchRecentAlerts });
@@ -591,6 +595,7 @@ const IdleBadge = ({ idle }: { idle: boolean }) => idle
 
 // Resources Tab
 const ResourcesTab = () => {
+  const { theme } = useAuth();
   const [typeFilter, setTypeFilter] = React.useState<string>('all');
   const [refreshKey, setRefreshKey] = React.useState(0);
 
@@ -608,7 +613,8 @@ const ResourcesTab = () => {
 
   // SSE — refetch resources when any alert fires
   useEffect(() => {
-    const sse = new EventSource(`${ALERT_API_BASE}/alerts/stream`);
+    const token = localStorage.getItem('cloudguard_token');
+    const sse = new EventSource(`${ALERT_API_BASE}/alerts/stream?token=${token}`);
     const handler = () => setRefreshKey(k => k + 1);
     sse.addEventListener('alert', handler);
     return () => {
@@ -724,6 +730,7 @@ const ResourcesTab = () => {
 };
 
 const CloudAdminDashboard = () => {
+  const { theme } = useAuth();
   const [tab, setTab] = useState<'overview'|'resources'|'users'>('overview');
   const { data: fp,         isLoading: fpLoad } = useQuery({ queryKey: ['finops'],      queryFn: fetchFinOps });
   const { data: comp,       isLoading: cpLoad } = useQuery({ queryKey: ['compliance'],  queryFn: fetchCompliance });
@@ -806,16 +813,16 @@ const CloudAdminDashboard = () => {
             </div>
             {cpLoad ? null : (
               <div className="glass-panel rounded-2xl p-6">
-                <h3 className="font-semibold mb-4 flex items-center gap-2"><ShieldCheck size={18} className="text-purple-400"/>Compliance by Category</h3>
+                <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><ShieldCheck size={18} className="text-purple-500"/>Compliance by Category</h3>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   {Object.entries(comp?.by_category??{}).map(([cat,val]:any)=>(
-                    <div key={cat} className="p-4 bg-dark-800 rounded-xl border border-dark-600">
+                    <div key={cat} className="p-4 dark:bg-dark-800 bg-gray-50 rounded-xl border dark:border-dark-600 border-gray-100 shadow-sm">
                       <div className="flex justify-between mb-2">
-                        <span className="text-sm text-gray-300 capitalize">{cat.replace(/_/g,' ')}</span>
-                        <span className={`text-sm font-bold ${val>80?'text-emerald-400':'text-orange-400'}`}>{val}%</span>
+                        <span className="text-sm dark:text-gray-300 text-gray-600 font-medium capitalize">{cat.replace(/_/g,' ')}</span>
+                        <span className={`text-sm font-bold ${val>80?'text-emerald-500':'text-orange-500'}`}>{val}%</span>
                       </div>
-                      <div className="w-full bg-dark-900 rounded-full h-1.5">
-                        <div className={`h-1.5 rounded-full ${val>80?'bg-emerald-500':'bg-orange-500'}`} style={{width:`${val}%`}}/>
+                      <div className="w-full dark:bg-dark-900 bg-gray-100 rounded-full h-1.5 shadow-inner">
+                        <div className={`h-1.5 rounded-full ${val>80?'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.2)]':'bg-orange-500'}`} style={{width:`${val}%`}}/>
                       </div>
                     </div>
                   ))}
@@ -1053,7 +1060,18 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // Inconsistent state, clear storage
       ['cloudguard_token','cloudguard_role','cloudguard_email'].forEach(k=>localStorage.removeItem(k));
     }
+
+    // INTERCEPTOR: Handle 401 Unauthorized globally
+    const interceptor = axios.interceptors.response.use(
+      res => res,
+      err => {
+        if (err.response?.status === 401) logout();
+        return Promise.reject(err);
+      }
+    );
+
     setLoading(false);
+    return () => axios.interceptors.response.eject(interceptor);
   }, []);
 
   const login = (token: string, userRole: string, userEmail: string) => {
