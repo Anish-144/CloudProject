@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from databases import Database
 import redis.asyncio as aioredis
-from routers import auth_router, ingest_router, alerts_router, finops_router, compliance_router, admin_router
+from routers import auth_router, ingest_router, alerts_router, finops_router, compliance_router, admin_router, analytics_router
 
 # ── Logging Setup ─────────────────────────────────────────────
 logging.basicConfig(
@@ -84,6 +84,7 @@ app.include_router(alerts_router)
 app.include_router(finops_router)
 app.include_router(compliance_router)
 app.include_router(admin_router)
+app.include_router(analytics_router)
 
 
 @app.exception_handler(Exception)

@@ -4,7 +4,7 @@ import {
   ShieldCheck, TrendingDown, Bell, Cloud, Activity, AlertTriangle,
   CheckCircle, DollarSign, Server, Users, Crown, BarChart2, Lock,
   LogOut, PiggyBank, Cpu, Monitor, Settings, Database, Download, Calendar,
-  Globe, Zap
+  Globe, Zap, Moon, Sun
 } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
@@ -13,6 +13,13 @@ import {
   BarElement, Title, Tooltip, Legend, ArcElement, Filler
 } from 'chart.js';
 import { Line, Doughnut, Bar } from 'react-chartjs-2';
+
+// Import new page components
+import { AdminOverview } from './pages/AdminOverview';
+import { UserManagement } from './pages/UserManagement';
+import { DepartmentSummary } from './pages/DepartmentSummary';
+import { ResourceRegistry } from './pages/ResourceRegistry';
+import { AuditLogs } from './pages/AuditLogs';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler);
 
@@ -31,10 +38,207 @@ const queryClient = new QueryClient({
 
 const API_BASE = 'http://localhost:8000/api/v1';
 
+// ─── Theme Context ────────────────────────────────────────────────────────────
+interface ThemeCtx { theme: 'light' | 'dark'; toggleTheme: () => void; }
+const ThemeContext = createContext<ThemeCtx>({ theme: 'dark', toggleTheme: () => {} });
+export const useTheme = () => useContext(ThemeContext);
+
+// ─── Theme Provider ───────────────────────────────────────────────────────────
+const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('cloudguard_theme') as 'light' | 'dark' | null;
+    return saved || 'dark';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('cloudguard_theme', theme);
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+
+  return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+};
+
+// ─── Theme Toggle & Error Boundary ────────────────────────────────────────────
+const ThemeToggle = () => {
+  const ctx = useTheme();
+  if (!ctx) return null;
+  const { theme, toggleTheme } = ctx;
+  return (
+    <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-dark-700 transition-colors text-sm font-medium">
+      {theme === 'dark' ? <Sun size={17} className="text-yellow-400" /> : <Moon size={17} className="text-blue-400" />}
+      <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+    </button>
+  );
+};
+
+class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean}> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: any, info: any) { console.error("Dashboard failed to load.", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="h-screen w-screen flex flex-col items-center justify-center bg-dark-900 p-4">
+          <div className="glass-panel rounded-2xl p-8 max-w-md border border-dark-700 text-center shadow-2xl">
+            <AlertTriangle className="mx-auto mb-4 text-red-500" size={48} />
+            <h2 className="text-2xl font-bold text-white mb-2">Dashboard failed to load.</h2>
+            <p className="text-gray-400 mb-6">Please refresh or check logs.</p>
+            <button onClick={() => window.location.reload()} className="px-6 py-2.5 bg-brand hover:bg-blue-500 text-white rounded-xl transition-all font-medium">Reload Dashboard</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ─── Admin Layout ───────────────────────────────────────────────────────────
+const AdminLayout = ({ children }: { children: React.ReactNode }) => {
+  const [clearModalOpen, setClearModalOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const location = useLocation();
+
+  const adminNav: NavItem[] = [
+    { path: '/admin-overview', icon: <Crown size={17}/>, label: 'Admin Overview' },
+    { path: '/user-management', icon: <Users size={17}/>, label: 'User Management' },
+    { path: '/department-summary', icon: <BarChart2 size={17}/>, label: 'Department Summary' },
+    { path: '/resource-registry', icon: <Database size={17}/>, label: 'Resource Registry' },
+    { path: '/audit-logs', icon: <Bell size={17}/>, label: 'Audit Logs' },
+  ];
+
+  const handleClearData = async () => {
+    setClearing(true);
+    try {
+      const response = await axios.post(`${API_BASE}/admin/clear-historical-data`);
+      console.log('Historical data cleared:', response.data);
+      alert(`✓ Success: ${response.data.message}\n\nDeleted Records:\n- finops_events: ${response.data.deleted_records.raw_finops_events}\n- compliance_logs: ${response.data.deleted_records.raw_compliance_logs}\n- infra_alerts: ${response.data.deleted_records.raw_infrastructure_alerts}`);
+      setClearModalOpen(false);
+    } catch (err: any) {
+      const errMsg = err.response?.data?.detail || err.message || 'Failed to clear data';
+      alert(`✗ Error: ${errMsg}`);
+      console.error('Clear data error:', err);
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const headerActions = (
+    <div className="flex flex-col gap-2 w-full">
+      <button
+        onClick={() => setClearModalOpen(true)}
+        title="Delete raw logs but preserve analytics"
+        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-400 hover:text-yellow-300 text-sm font-medium transition-all"
+      >
+        <Zap size={17} />
+        <span>Clear Past Data</span>
+      </button>
+      <ThemeToggle />
+    </div>
+  );
+
+  return (
+    <Layout nav={adminNav} headerActions={headerActions}>
+      {children}
+      <ClearDataModal 
+        isOpen={clearModalOpen}
+        isLoading={clearing}
+        onConfirm={handleClearData}
+        onCancel={() => setClearModalOpen(false)}
+      />
+    </Layout>
+  );
+};
+
+// ─── Clear Past Data Modal ─────────────────────────────────────────────────────
+interface ClearDataModalProps {
+  isOpen: boolean;
+  isLoading: boolean;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+}
+
+const ClearDataModal = ({ isOpen, isLoading, onConfirm, onCancel }: ClearDataModalProps) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="glass-panel rounded-2xl p-8 max-w-md border border-dark-700 shadow-2xl animate-in fade-in zoom-in duration-300">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 bg-yellow-500/20 rounded-lg border border-yellow-500/30">
+            <AlertTriangle size={24} className="text-yellow-400" />
+          </div>
+          <h2 className="text-2xl font-bold text-white">Clear Past Data?</h2>
+        </div>
+
+        <p className="text-gray-300 mb-2">
+          This will delete historical logs but keep analytics summaries used by graphs.
+        </p>
+        <div className="bg-dark-700/50 border border-dark-600 rounded-xl p-4 mb-6 text-sm">
+          <p className="text-gray-400 font-mono text-xs leading-relaxed">
+            <strong>Deleted:</strong><br/>
+            • raw_finops_events<br/>
+            • raw_compliance_logs<br/>
+            • raw_infrastructure_alerts<br/>
+            <br/>
+            <strong>Preserved:</strong><br/>
+            • analytics_cost_trends<br/>
+            • analytics_violation_summary<br/>
+            • analytics_resource_metrics
+          </p>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            disabled={isLoading}
+            className="flex-1 px-4 py-2.5 rounded-xl border border-dark-600 bg-dark-700 hover:bg-dark-600 text-gray-300 font-medium transition-all disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isLoading}
+            className="flex-1 px-4 py-2.5 rounded-xl bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/40 text-yellow-400 font-medium transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {isLoading ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-yellow-400/50 border-r-2" />
+                Clearing...
+              </>
+            ) : (
+              'Confirm'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Auth Helpers ─────────────────────────────────────────────────────────────
 export const setAuthToken = (token: string) => {
   axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
 };
+
+// Setup axios interceptor for 403 errors
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 403) {
+      console.warn('[AUTH] 403 Forbidden - Access denied');
+      alert('Access Denied: You do not have permission to access this resource.');
+      // Optionally redirect to login or dashboard
+      window.location.href = '/';
+    }
+    return Promise.reject(error);
+  }
+);
 
 const handleCSVDownload = async (endpoint: string, filename: string) => {
   try {
@@ -66,7 +270,7 @@ const getRoleDashboard = (role: string): string => {
     case 'compliance_officer': return '/dashboard/compliance';
     case 'it_admin':           return '/dashboard/infra';
     case 'cloud_admin':
-    case 'admin':              return '/dashboard/admin';
+    case 'admin':              return '/admin-overview';
     default:                   return '/login'; // Safer fallback
   }
 };
@@ -232,9 +436,11 @@ const LogExport = () => {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 interface NavItem { path: string; icon: React.ReactNode; label: string; }
-const Sidebar = ({ navItems }: { navItems: NavItem[] }) => {
+interface SidebarProps { navItems: NavItem[]; headerActions?: React.ReactNode; }
+const Sidebar = ({ navItems, headerActions }: SidebarProps) => {
   const { pathname } = useLocation();
   const { email, role, logout } = useAuth();
+  
   return (
     <aside className="w-64 glass-panel border-r border-dark-700 flex flex-col shrink-0">
       <div className="p-5 flex items-center gap-3 border-b border-dark-700">
@@ -246,20 +452,27 @@ const Sidebar = ({ navItems }: { navItems: NavItem[] }) => {
           <span className="text-[10px] text-gray-500 uppercase tracking-widest">Governance</span>
         </div>
       </div>
+      
       <nav className="flex-1 p-4 space-y-1">
-        {navItems.map(item => (
-          <Link key={item.path} to={item.path}>
-            <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-sm ${
-              pathname === item.path
-                ? 'bg-brand/10 text-brand border border-brand/20 font-semibold'
-                : 'text-gray-400 hover:bg-dark-700 hover:text-gray-200'
-            }`}>
-              {item.icon}
-              <span>{item.label}</span>
-            </div>
-          </Link>
-        ))}
+        {navItems.map(item => {
+          const isActive = pathname === item.path || pathname.startsWith(item.path);
+          return (
+            <Link key={item.path} to={item.path}>
+              <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-sm ${
+                isActive
+                  ? 'bg-brand/10 text-brand border border-brand/20 font-semibold'
+                  : 'text-gray-400 hover:bg-dark-700 hover:text-gray-200'
+              }`}>
+                {item.icon}
+                <span>{item.label}</span>
+              </div>
+            </Link>
+          );
+        })}
       </nav>
+      
+      {headerActions && <div className="px-4 py-3 border-t border-dark-700">{headerActions}</div>}
+      
       <div className="p-4 border-t border-dark-700 space-y-2">
         <div className="flex items-center gap-3 p-3 rounded-xl bg-dark-700/50 border border-dark-600">
           <div className="w-8 h-8 rounded-full bg-brand/20 border border-brand/30 flex items-center justify-center text-brand font-bold text-sm shrink-0">
@@ -278,9 +491,9 @@ const Sidebar = ({ navItems }: { navItems: NavItem[] }) => {
   );
 };
 
-const Layout = ({ children, nav }: { children: React.ReactNode; nav: NavItem[] }) => (
+const Layout = ({ children, nav, headerActions }: { children: React.ReactNode; nav: NavItem[]; headerActions?: React.ReactNode }) => (
   <div className="flex h-screen overflow-hidden">
-    <Sidebar navItems={nav} />
+    <Sidebar navItems={nav} headerActions={headerActions} />
     <main className="flex-1 overflow-y-auto bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-dark-800 via-dark-900 to-dark-900 relative">
       <div className="absolute top-0 w-full h-0.5 bg-gradient-to-r from-brand via-purple-500 to-brand opacity-50 z-10" />
       <div className="p-8 pb-16">{children}</div>
@@ -298,6 +511,8 @@ const FinOpsDashboard = () => {
     { path: '/dashboard/finops', icon: <TrendingDown size={17} />, label: 'FinOps Intelligence' },
   ];
 
+  const headerActions = <ThemeToggle />;
+
   const trendChart = {
     labels: trends?.map((t: any) => t.date) ?? [],
     datasets: [{
@@ -309,7 +524,7 @@ const FinOpsDashboard = () => {
   };
 
   return (
-    <Layout nav={nav}>
+    <Layout nav={nav} headerActions={headerActions}>
       <div className="space-y-6 animate-in fade-in duration-500">
         <div className="flex items-center justify-between">
           <div>
@@ -412,13 +627,15 @@ const ComplianceDashboard = () => {
     { path: '/dashboard/compliance', icon: <ShieldCheck size={17} />, label: 'Compliance Posture' },
   ];
 
+  const headerActions = <ThemeToggle />;
+
   const donut = {
     labels: ['Compliant','Violations'],
     datasets: [{ data:[comp?.overall_score??0, 100-(comp?.overall_score??0)], backgroundColor:['#10b981','#f43f5e'], borderWidth:0, cutout:'78%' }]
   };
 
   return (
-    <Layout nav={nav}>
+    <Layout nav={nav} headerActions={headerActions}>
       <div className="space-y-6 animate-in fade-in duration-500">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><ShieldCheck className="text-purple-400" /> Compliance Posture</h1>
@@ -523,6 +740,8 @@ const ITAdminDashboard = () => {
     { path: '/dashboard/infra', icon: <Bell size={17} />,    label: 'Alert Center' },
   ];
 
+  const headerActions = <ThemeToggle />;
+
   const counts = { critical: 0, high: 0, medium: 0, low: 0 };
   (alerts ?? []).forEach((a: any) => { counts[a.severity as keyof typeof counts] = (counts[a.severity as keyof typeof counts] ?? 0) + 1; });
   const total = (alerts ?? []).length;
@@ -536,7 +755,7 @@ const ITAdminDashboard = () => {
   };
 
   return (
-    <Layout nav={nav.slice(0,1)}>
+    <Layout nav={nav.slice(0,1)} headerActions={headerActions}>
       <div className="space-y-6 animate-in fade-in duration-500">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><Server className="text-cyan-400" /> Infrastructure Monitor</h1>
@@ -607,253 +826,7 @@ const ITAdminDashboard = () => {
 };
 
 // ─── CLOUD ADMIN DASHBOARD ────────────────────────────────────────────────────
-const CloudAdminDashboard = () => {
-  const [tab, setTab] = useState<'overview'|'users'|'resources'>('overview');
-  const { data: fp,         isLoading: fpLoad } = useQuery({ queryKey: ['finops'],     queryFn: fetchFinOps });
-  const { data: comp,       isLoading: cpLoad } = useQuery({ queryKey: ['compliance'], queryFn: fetchCompliance });
-  const { data: trends,     isLoading: tdLoad } = useQuery({ queryKey: ['trends'],     queryFn: fetchTrends });
-  const { data: adminUsers, isLoading: auLoad } = useQuery({ queryKey: ['admin-users'],queryFn: fetchAdminUsers, enabled: tab==='users' });
-  const { data: adminRes,   isLoading: arLoad } = useQuery({ queryKey: ['admin-resources'],queryFn: fetchAdminResources, enabled: tab==='resources' });
-  const { data: accStats,   isLoading: asLoad } = useQuery({ queryKey: ['account-stats'],queryFn: fetchAccountStats, enabled: tab==='overview' });
 
-  const nav: NavItem[] = [
-    { path:'/dashboard/admin',      icon:<Crown size={17}/>,       label:'Admin Overview'      },
-    { path:'/dashboard/finops',     icon:<TrendingDown size={17}/>, label:'FinOps'              },
-    { path:'/dashboard/compliance', icon:<ShieldCheck size={17}/>,  label:'Compliance'          },
-    { path:'/dashboard/infra',      icon:<Monitor size={17}/>,      label:'Infrastructure'      },
-  ];
-
-  const trendChart = {
-    labels: trends?.map((t:any)=>t.date)??[],
-    datasets:[{ label:'Daily Cost ($)', data:trends?.map((t:any)=>t.cost)??[], borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.08)', borderWidth:2, fill:true, tension:0.4, pointRadius:3 }]
-  };
-
-  const roleColors: Record<string,string> = {
-    cloud_admin:        'bg-purple-500/20 text-purple-400 border-purple-500/30',
-    admin:              'bg-purple-500/20 text-purple-400 border-purple-500/30',
-    finops_manager:     'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    compliance_manager: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-    it_admin:           'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
-    viewer:             'bg-gray-500/20 text-gray-400 border-gray-500/30',
-  };
-
-  return (
-    <Layout nav={nav}>
-      <div className="space-y-6 animate-in fade-in duration-500">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><Crown className="text-yellow-400" /> Cloud Administration</h1>
-            <p className="text-gray-400 text-sm">Full platform visibility · User management · All services</p>
-          </div>
-          <div className="flex bg-dark-800 border border-dark-600 rounded-xl p-1 gap-1">
-            {(['overview','users','resources'] as const).map(t=>(
-              <button key={t} onClick={()=>setTab(t)} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${tab===t?'bg-brand text-white shadow-sm':'text-gray-400 hover:text-gray-200'}`}>
-                {t==='overview'?'Overview':t==='users'?'User Mgmt':'Resources'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {tab === 'overview' && (
-          <>
-            {(fpLoad || cpLoad) ? <Spinner /> : (
-              <>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <MetricCard title="Savings Potential" value={`$${(fp?.total_savings_potential ?? 0).toLocaleString()}`} sub="Cloud waste detected" icon={DollarSign} color="text-emerald-400" />
-                  <MetricCard title="Compliance Score" value={`${comp?.overall_score ?? 0}%`} sub={`${comp?.active_violations ?? 0} violations`} icon={ShieldCheck} color={comp?.overall_score > 80 ? 'text-emerald-400' : 'text-orange-400'} />
-                  <MetricCard title="Critical Violations" value={comp?.critical_violations ?? 0} sub="Requires immediate action" icon={AlertTriangle} color="text-red-400" />
-                  <MetricCard title="Idle Resources" value={fp?.idle_resources ?? 0} sub="Running < 5% CPU" icon={Activity} color="text-yellow-400" />
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <div className="lg:col-span-2 glass-panel rounded-2xl p-6">
-                    <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-brand" /> Cost Trend — Last 30 Days</h3>
-                    {tdLoad ? <Spinner /> : (
-                      <div className="h-52">
-                        <Line data={trendChart} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#1f2937' }, ticks: { color: '#9ca3af' } }, x: { grid: { display: false }, ticks: { color: '#9ca3af', maxTicksLimit: 8 } } } }} />
-                      </div>
-                    )}
-                  </div>
-                  <div className="h-80"><AlertFeed /></div>
-                </div>
-
-                <div className="glass-panel rounded-2xl p-6">
-                  <h3 className="font-semibold mb-4 flex items-center gap-2"><ShieldCheck size={18} className="text-purple-400" /> Compliance by Category</h3>
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    {Object.entries(comp?.by_category ?? {}).map(([cat, val]: any) => (
-                      <div key={cat} className="p-4 bg-dark-800 rounded-xl border border-dark-600">
-                        <div className="flex justify-between mb-2">
-                          <span className="text-sm text-gray-300 capitalize">{cat.replace(/_/g, ' ')}</span>
-                          <span className={`text-sm font-bold ${val > 80 ? 'text-emerald-400' : 'text-orange-400'}`}>{val}%</span>
-                        </div>
-                        <div className="w-full bg-dark-900 rounded-full h-1.5">
-                          <div className={`h-1.5 rounded-full ${val > 80 ? 'bg-emerald-500' : 'bg-orange-500'}`} style={{ width: `${val}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {asLoad ? <Spinner /> : (
-                  <div className="glass-panel rounded-2xl overflow-hidden shadow-lg border border-dark-700/50">
-                    <div className="p-4 border-b border-dark-700 bg-dark-800/80 flex items-center justify-between">
-                      <h3 className="font-semibold text-white flex items-center gap-2">
-                         <Cloud size={18} className="text-brand" /> AWS Account Portfolio Distribution
-                      </h3>
-                    </div>
-                    <div className="grid grid-cols-1 lg:grid-cols-2">
-                      {(accStats ?? []).map((acc: any, i: number) => (
-                        <div key={acc.account_id} className={`p-6 ${i === 0 ? 'lg:border-r border-dark-700' : ''} hover:bg-dark-800/30 transition-colors group relative overflow-hidden`}>
-                          <div className="flex items-center justify-between mb-4 relative z-10">
-                            <div>
-                              <h4 className="text-lg font-bold text-white group-hover:text-brand transition-colors">{acc.account_name}</h4>
-                              <p className="text-xs text-gray-500 font-mono tracking-wider">{acc.aws_id}</p>
-                            </div>
-                            {i === 0 ? <Globe className="text-brand opacity-40 group-hover:rotate-12 transition-transform" size={24} /> : <Zap className="text-yellow-400 opacity-40 group-hover:scale-110 transition-transform" size={24} />}
-                          </div>
-                          <div className="grid grid-cols-3 gap-3 mb-6 relative z-10">
-                            <div className="p-3 bg-dark-700/50 rounded-xl border border-dark-600">
-                               <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Users</p>
-                               <p className="text-lg font-bold text-white">{acc.user_count}</p>
-                            </div>
-                            <div className="p-3 bg-dark-700/50 rounded-xl border border-dark-600">
-                               <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Resources</p>
-                               <p className="text-lg font-bold text-white">{acc.resource_count}</p>
-                            </div>
-                            <div className="p-3 bg-dark-700/50 rounded-xl border border-dark-600">
-                               <p className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">Est. Cost</p>
-                               <p className="text-lg font-bold text-emerald-400">${parseFloat(acc.total_cost).toFixed(2)}</p>
-                            </div>
-                          </div>
-                          <div className="space-y-2 relative z-10">
-                             <div className="flex justify-between text-[10px] font-medium text-gray-400 mb-1">
-                               <span>UTILIZATION</span>
-                               <span className={i === 0 ? 'text-brand' : 'text-yellow-400'}>{Math.min(100, (acc.resource_count / 15) * 100).toFixed(0)}%</span>
-                             </div>
-                             <div className="w-full bg-dark-900 h-1.5 rounded-full overflow-hidden">
-                               <div className={`h-full transition-all duration-1000 ${i === 0 ? 'bg-brand' : 'bg-yellow-400'}`} style={{ width: `${Math.min(100, (acc.resource_count / 15) * 100)}%` }} />
-                             </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <LogExport />
-                  <div className="glass-panel rounded-2xl p-6 flex flex-col justify-center">
-                    <h3 className="font-semibold mb-4 flex items-center gap-2">
-                       <Crown size={18} className="text-yellow-400" /> Platform Reports
-                    </h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button onClick={() => handleCSVDownload('/admin/export/resources', 'full_resource_inventory.csv')} className="flex items-center justify-center gap-2 bg-dark-700 hover:bg-dark-600 border border-dark-600 text-gray-200 px-4 py-3 rounded-xl text-xs font-medium transition-all">
-                        <Server size={14} /> Resource Inventory
-                      </button>
-                      <button onClick={() => handleCSVDownload('/alerts/export', 'all_platform_alerts.csv')} className="flex items-center justify-center gap-2 bg-dark-700 hover:bg-dark-600 border border-dark-600 text-gray-200 px-4 py-3 rounded-xl text-xs font-medium transition-all">
-                        <Bell size={14} /> Global Alert Log
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </>
-        )}
-
-        {tab === 'users' && (
-          <div className="glass-panel rounded-2xl overflow-hidden shadow-lg border border-dark-700/50 mt-6">
-            <div className="p-4 border-b border-dark-700 bg-dark-800/60 flex justify-between items-center">
-              <h3 className="font-semibold text-white flex items-center gap-2"><Users size={18} className="text-brand" /> User Management</h3>
-              <button className="text-[10px] bg-brand hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-all font-bold uppercase tracking-widest">+ New User</button>
-            </div>
-            {auLoad ? <Spinner /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="text-[10px] text-gray-500 uppercase tracking-widest bg-dark-800/40">
-                    <tr>{['User Identity','Platform Role','AWS Account','Joined Date'].map(h=><th key={h} className="px-5 py-4 font-bold">{h}</th>)}</tr>
-                  </thead>
-                  <tbody className="divide-y divide-dark-700/30">
-                    {(adminUsers ?? []).map((user: any) => (
-                      <tr key={user.id} className="hover:bg-dark-800/30 transition-colors group">
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl bg-dark-700 border border-dark-600 flex items-center justify-center text-xs font-bold text-gray-300">
-                              {user.email.charAt(0).toUpperCase()}
-                            </div>
-                            <span className="text-sm font-medium text-gray-200">{user.email}</span>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className={`text-[10px] px-2.5 py-1 rounded-lg border font-bold uppercase tracking-wider ${roleColors[user.role] ?? roleColors.viewer}`}>
-                            {user.role.replace(/_/g, ' ')}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4">
-                           <div className="flex items-center gap-2">
-                             <div className={`w-2 h-2 rounded-full ${user.aws_account_name?.includes('Alpha') ? 'bg-brand' : 'bg-yellow-400'} shadow-[0_0_8px_rgba(59,130,246,0.3)]`} />
-                             <span className="text-xs text-gray-300 font-medium">{user.aws_account_name ?? 'Standalone'}</span>
-                           </div>
-                        </td>
-                        <td className="px-5 py-4 text-xs text-gray-500 font-mono italic">{new Date(user.created_at).toLocaleDateString()}</td>
-                      </tr>
-                    ))}
-                    {!adminUsers?.length && <tr><td colSpan={4} className="py-20 text-center text-gray-500 font-medium italic">No registered users discovered.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === 'resources' && (
-          <div className="glass-panel rounded-2xl overflow-hidden shadow-lg border border-dark-700/50 mt-6 animate-in slide-in-from-bottom-4 duration-500">
-            <div className="p-4 border-b border-dark-700 bg-dark-800/60 flex justify-between items-center">
-              <h3 className="font-semibold text-white flex items-center gap-2"><Server size={18} className="text-brand" /> Global Resource Inventory</h3>
-              <button onClick={() => handleCSVDownload('/admin/export/resources', 'global_inventory.csv')} className="text-[10px] bg-dark-700 hover:bg-dark-600 border border-dark-600 text-gray-300 px-3 py-1.5 rounded-lg transition-all flex items-center gap-2 font-bold uppercase tracking-widest">
-                <Download size={12}/> Generate Report
-              </button>
-            </div>
-            {arLoad ? <Spinner /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="text-[10px] text-gray-500 uppercase tracking-widest bg-dark-800/40">
-                    <tr>{['Resource Identifier','Service Type','Infrastructure','AWS Region','Hosting Account','Discovery Date'].map(h=><th key={h} className="px-5 py-4 font-bold">{h}</th>)}</tr>
-                  </thead>
-                  <tbody className="divide-y divide-dark-700/30">
-                    {(adminRes ?? []).map((res: any) => (
-                      <tr key={res.id} className="hover:bg-dark-800/30 transition-colors group">
-                        <td className="px-5 py-4">
-                           <div className="flex items-center gap-3">
-                             <div className="p-2 bg-dark-700 rounded-lg border border-dark-600"><Database size={14} className="text-brand opacity-60" /></div>
-                             <span className="text-xs font-mono text-gray-300 transition-colors">{res.id}</span>
-                           </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className="text-[10px] bg-dark-700/50 text-gray-300 px-2 py-1 rounded border border-dark-600 uppercase tracking-widest font-bold">{res.resource_type}</span>
-                        </td>
-                        <td className="px-5 py-4 text-[10px] text-gray-400 uppercase tracking-widest font-black flex items-center gap-2"><div className="w-1.5 h-1.5 bg-brand/50 rounded-full" /> {res.cloud_provider}</td>
-                        <td className="px-5 py-4 text-xs text-gray-500 font-medium italic">{res.region}</td>
-                        <td className="px-5 py-4">
-                           <div className="flex items-center gap-2">
-                             <div className={`w-1.5 h-1.5 rounded-full ${res.aws_account_name?.includes('Alpha') ? 'bg-brand' : 'bg-yellow-400'}`} />
-                             <span className="text-xs text-gray-300">{res.aws_account_name ?? 'Default'}</span>
-                           </div>
-                        </td>
-                        <td className="px-5 py-4 text-xs text-gray-500">{new Date(res.created_at).toLocaleDateString()}</td>
-                      </tr>
-                    ))}
-                    {!(adminRes?.length) && <tr><td colSpan={6} className="py-12 text-center text-gray-500">No resources discovered yet</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </Layout>
-  );
-};
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
 const LoginScreen = ({ onLogin }: { onLogin: (token: string, role: string, email: string) => void }) => {
@@ -1041,7 +1014,11 @@ function AppRoutes() {
       <Route path="/dashboard/finops"   element={<ProtectedRoute allowed={FINOPS}><FinOpsDashboard /></ProtectedRoute>} />
       <Route path="/dashboard/compliance" element={<ProtectedRoute allowed={COMP}><ComplianceDashboard /></ProtectedRoute>} />
       <Route path="/dashboard/infra"    element={<ProtectedRoute allowed={IT}><ITAdminDashboard /></ProtectedRoute>} />
-      <Route path="/dashboard/admin"    element={<ProtectedRoute allowed={ADMIN}><CloudAdminDashboard /></ProtectedRoute>} />
+      <Route path="/admin-overview"     element={<ProtectedRoute allowed={ADMIN}><AdminLayout><AdminOverview /></AdminLayout></ProtectedRoute>} />
+      <Route path="/user-management"    element={<ProtectedRoute allowed={ADMIN}><AdminLayout><UserManagement /></AdminLayout></ProtectedRoute>} />
+      <Route path="/department-summary" element={<ProtectedRoute allowed={ADMIN}><AdminLayout><DepartmentSummary /></AdminLayout></ProtectedRoute>} />
+      <Route path="/resource-registry"  element={<ProtectedRoute allowed={ADMIN}><AdminLayout><ResourceRegistry /></AdminLayout></ProtectedRoute>} />
+      <Route path="/audit-logs"         element={<ProtectedRoute allowed={ADMIN}><AdminLayout><AuditLogs /></AdminLayout></ProtectedRoute>} />
       <Route path="*"                   element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -1050,12 +1027,16 @@ function AppRoutes() {
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AuthProvider>
+            <ErrorBoundary>
+              <AppRoutes />
+            </ErrorBoundary>
+          </AuthProvider>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

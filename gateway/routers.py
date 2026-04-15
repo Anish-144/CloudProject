@@ -456,3 +456,128 @@ async def export_resources(current_user: dict = Depends(require_cloud_admin)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=cloud_resources.csv"}
     )
+
+
+@admin_router.post("/clear-historical-data")
+async def clear_historical_data(current_user: dict = Depends(require_cloud_admin)):
+    """
+    Delete raw historical logs but preserve analytics data.
+    
+    Deletes:
+    - raw_finops_events
+    - raw_compliance_logs
+    - raw_infrastructure_alerts
+    
+    Preserves:
+    - analytics_cost_trends
+    - analytics_violation_summary
+    - analytics_resource_metrics
+    
+    Returns:
+        dict with status and counts of deleted records
+    """
+    from main import database
+    
+    try:
+        logger.info(f"Clearing historical data requested by {current_user.get('email')}")
+        
+        # Get record counts before deletion
+        finops_count = await database.fetch_one(
+            "SELECT COUNT(*) as count FROM raw_finops_events"
+        )
+        compliance_count = await database.fetch_one(
+            "SELECT COUNT(*) as count FROM raw_compliance_logs"
+        )
+        infra_count = await database.fetch_one(
+            "SELECT COUNT(*) as count FROM raw_infrastructure_alerts"
+        )
+        
+        # Delete raw data tables
+        deletions = {
+            'raw_finops_events': await database.execute("DELETE FROM raw_finops_events"),
+            'raw_compliance_logs': await database.execute("DELETE FROM raw_compliance_logs"),
+            'raw_infrastructure_alerts': await database.execute("DELETE FROM raw_infrastructure_alerts"),
+        }
+        
+        logger.info(
+            f"Historical data cleared. Deleted: "
+            f"finops_events={finops_count.get('count', 0)}, "
+            f"compliance_logs={compliance_count.get('count', 0)}, "
+            f"infra_alerts={infra_count.get('count', 0)} by {current_user.get('email')}"
+        )
+        
+        return {
+            "status": "success",
+            "message": "Historical logs cleared successfully. Analytics summaries preserved.",
+            "deleted_records": {
+                "raw_finops_events": finops_count.get('count', 0),
+                "raw_compliance_logs": compliance_count.get('count', 0),
+                "raw_infrastructure_alerts": infra_count.get('count', 0)
+            },
+            "deleted_at": datetime.now().isoformat(),
+            "cleared_by": current_user.get('email')
+        }
+    except Exception as e:
+        logger.error(f"Error clearing historical data: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to clear historical data"
+        )
+
+
+# ── Analytics Router ──────────────────────────────────────────
+analytics_router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
+
+
+@analytics_router.get("/cost-trend")
+async def get_cost_trend(current_user: dict = Depends(require_cloud_admin)):
+    """
+    Get cost trend data from analytics_cost_trends table.
+    Returns: list of {date, cost}
+    """
+    from main import database
+    
+    try:
+        rows = await database.fetch_all(
+            "SELECT date, cost FROM analytics_cost_trends ORDER BY date ASC"
+        )
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error(f"Error fetching cost trend: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cost trend data")
+
+
+@analytics_router.get("/compliance-summary")
+async def get_compliance_summary(current_user: dict = Depends(require_cloud_admin)):
+    """
+    Get compliance summary data from analytics_violation_summary table.
+    Returns: list of {category, compliance_percentage}
+    """
+    from main import database
+    
+    try:
+        rows = await database.fetch_all(
+            "SELECT category, compliance_percentage FROM analytics_violation_summary"
+        )
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error(f"Error fetching compliance summary: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch compliance summary data")
+
+
+@analytics_router.get("/resource-metrics")
+async def get_resource_metrics(current_user: dict = Depends(require_cloud_admin)):
+    """
+    Get resource metrics data from analytics_resource_metrics table.
+    Returns: list of {date, idle_count}
+    """
+    from main import database
+    
+    try:
+        rows = await database.fetch_all(
+            "SELECT date, idle_count FROM analytics_resource_metrics ORDER BY date ASC"
+        )
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error(f"Error fetching resource metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch resource metrics data")

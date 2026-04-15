@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 import os
+import logging
 from passlib.context import CryptContext
 from models import UserRole
 
@@ -13,6 +14,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+logger = logging.getLogger(__name__)
 
 # Roles that are equivalent to cloud_admin (backward compat)
 CLOUD_ADMIN_ROLES = {UserRole.CLOUD_ADMIN.value, UserRole.ADMIN.value}
