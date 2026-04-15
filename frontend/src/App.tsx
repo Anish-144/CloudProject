@@ -16,12 +16,14 @@ import { Line, Doughnut, Bar } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler);
 
-// ─── QueryClient (OUTSIDE component — prevents recreation on re-render) ───────
+const REFRESH_INTERVAL = parseInt(import.meta.env.VITE_DASHBOARD_REFRESH_INTERVAL || '30000', 10);
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000,       // cache 5 minutes
-      refetchOnWindowFocus: false,      // no refetch on tab switch
+      staleTime: Math.max(0, REFRESH_INTERVAL - 5000), // Ensure data is stale before next poll
+      refetchInterval: REFRESH_INTERVAL,              // Automatic background refresh
+      refetchOnWindowFocus: false,
       retry: 1,
     }
   }
