@@ -391,6 +391,36 @@ async def list_users(current_user: dict = Depends(require_cloud_admin)):
     return [dict(r) for r in rows]
 
 
+@admin_router.post("/users")
+async def create_user(body: dict, current_user: dict = Depends(require_cloud_admin)):
+    from main import database
+    import uuid
+    from auth import get_password_hash
+    email = body.get("email")
+    role = body.get("role")
+    secret_key = body.get("secret_key")
+    
+    if not all([email, role, secret_key]):
+        raise HTTPException(status_code=400, detail="Missing required fields: email, role, secret_key")
+    
+    valid_roles = ["admin", "cloud_admin", "finops_manager", "compliance_manager", "it_admin", "viewer"]
+    if role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+        
+    hashed_password = get_password_hash(secret_key)
+    
+    try:
+        await database.execute(
+            """INSERT INTO users (id, email, password_hash, role) 
+            VALUES (:id, :email, :password_hash, :role)""",
+            {"id": str(uuid.uuid4()), "email": email, "password_hash": hashed_password, "role": role}
+        )
+        return {"message": "User created successfully"}
+    except Exception as e:
+        logger.error(f"Error creating user: {str(e)}")
+        raise HTTPException(status_code=400, detail="Error creating user. Email may already exist.")
+
+
 @admin_router.get("/stats/by-account", response_model=list[AccountStats])
 async def get_account_stats(current_user: dict = Depends(require_cloud_admin)):
     from main import database

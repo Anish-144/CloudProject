@@ -60,6 +60,80 @@ const RoleModal = ({ isOpen, user, onConfirm, onCancel, loading }: any) => {
   );
 };
 
+const AddUserModal = ({ isOpen, onConfirm, onCancel, loading }: any) => {
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('viewer');
+  const [secretKey, setSecretKey] = useState('');
+
+  if (!isOpen) return null;
+
+  const roles = [
+    'cloud_admin', 'finops_manager', 'compliance_manager', 
+    'it_admin', 'viewer'
+  ];
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !secretKey) return alert("Email and Secret Key are required.");
+    onConfirm({ email, role, secret_key: secretKey });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="glass-panel rounded-2xl p-8 w-full max-w-md border border-dark-700 shadow-2xl">
+        <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <Plus className="text-brand" /> Add New User
+        </h2>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Email Address</label>
+            <input 
+              type="email" required
+              value={email} onChange={e => setEmail(e.target.value)}
+              className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50" 
+              placeholder="employee@cloudguard.io"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Role</label>
+            <select 
+              value={role} onChange={e => setRole(e.target.value)}
+              className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50"
+            >
+              {roles.map(r => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Secret Key (Password)</label>
+            <input 
+              type="password" required
+              value={secretKey} onChange={e => setSecretKey(e.target.value)}
+              className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50" 
+              placeholder="Enter secure key"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button
+              type="button" onClick={onCancel} disabled={loading}
+              className="flex-1 px-4 py-2.5 rounded-xl border border-dark-600 bg-dark-700 hover:bg-dark-600 text-gray-300 font-medium transition-all disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit" disabled={loading}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-brand hover:bg-blue-500 text-white font-medium transition-all disabled:opacity-50"
+            >
+              {loading ? 'Creating...' : 'Create User'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 export const UserManagement = () => {
   const { data: adminUsers, isLoading: auLoad } = useQuery({
     queryKey: ['admin-users'],
@@ -68,6 +142,8 @@ export const UserManagement = () => {
   const queryClient = useQueryClient();
   const [editingUser, setEditingUser] = useState<any>(null);
   const [updatingRole, setUpdatingRole] = useState(false);
+  const [isAddingUser, setIsAddingUser] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
 
   const roleColors: Record<string, string> = {
     cloud_admin:       'bg-purple-500/20 text-purple-400 border-purple-500/30',
@@ -90,6 +166,20 @@ export const UserManagement = () => {
     }
   };
 
+  const handleAddUser = async (data: any) => {
+    setCreatingUser(true);
+    try {
+      await axios.post(`${API_BASE}/admin/users`, data);
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      setIsAddingUser(false);
+      alert('User added successfully');
+    } catch (err: any) {
+      alert(`Error adding user: ${err.response?.data?.detail ?? err.message}`);
+    } finally {
+      setCreatingUser(false);
+    }
+  };
+
   const handleDeleteUser = async (userId: string, email: string) => {
     if (!confirm(`Are you sure you want to delete user ${email}?`)) return;
     try {
@@ -109,7 +199,10 @@ export const UserManagement = () => {
           </h1>
           <p className="text-gray-400 text-sm">Manage platform users and assign roles</p>
         </div>
-        <button className="flex items-center gap-2 bg-brand hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl transition-all">
+        <button 
+          onClick={() => setIsAddingUser(true)}
+          className="flex items-center gap-2 bg-brand hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl transition-all"
+        >
           <Plus size={18} /> Add User
         </button>
       </div>
@@ -178,6 +271,13 @@ export const UserManagement = () => {
         onConfirm={handleUpdateRole}
         onCancel={() => setEditingUser(null)}
         loading={updatingRole}
+      />
+
+      <AddUserModal
+        isOpen={isAddingUser}
+        onConfirm={handleAddUser}
+        onCancel={() => setIsAddingUser(false)}
+        loading={creatingUser}
       />
     </div>
   );

@@ -240,21 +240,7 @@ axios.interceptors.response.use(
   }
 );
 
-const handleCSVDownload = async (endpoint: string, filename: string) => {
-  try {
-    const response = await axios.get(`${API_BASE}${endpoint}`, { responseType: 'blob' });
-    const url = window.URL.createObjectURL(new Blob([response.data]));
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  } catch (err) {
-    console.error('Download failed:', err);
-    alert('Failed to download CSV. Please check your permissions.');
-  }
-};
+// removed handleCSVDownload
 
 // ─── Auth Context ─────────────────────────────────────────────────────────────
 interface AuthCtx { authed: boolean; role: string; email: string; login: (token: string, role: string, email: string) => void; logout: () => void; }
@@ -370,69 +356,7 @@ const AlertFeed = () => {
   );
 };
 
-// ─── Log Export Section ───────────────────────────────────────────────────────
-const LogExport = () => {
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleDownload = async () => {
-    setLoading(true);
-    let url = '/finops/export/logs';
-    const params = new URLSearchParams();
-    if (start) params.append('start_date', new Date(start).toISOString());
-    if (end) params.append('end_date', new Date(end).toISOString());
-    const query = params.toString();
-    if (query) url += `?${query}`;
-    
-    await handleCSVDownload(url, `usage_logs_${new Date().toISOString().split('T')[0]}.csv`);
-    setLoading(false);
-  };
-
-  return (
-    <div className="glass-panel rounded-2xl p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold flex items-center gap-2">
-          <Database size={18} className="text-brand" /> Export Usage Logs
-        </h3>
-        <button 
-          onClick={handleDownload}
-          disabled={loading}
-          className="flex items-center gap-2 bg-brand hover:bg-blue-500 text-white px-4 py-2 rounded-xl text-sm transition-all disabled:opacity-50"
-        >
-          <Download size={16} /> {loading ? 'Exporting...' : 'Export CSV'}
-        </button>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Start Date</label>
-          <div className="relative">
-            <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-            <input 
-              type="date" 
-              value={start} 
-              onChange={e => setStart(e.target.value)}
-              className="w-full bg-dark-700 border border-dark-600 rounded-xl pl-10 pr-4 py-2 text-sm text-gray-200 outline-none focus:border-brand/50 transition-all" 
-            />
-          </div>
-        </div>
-        <div>
-          <label className="block text-[10px] text-gray-500 uppercase tracking-widest mb-1.5 ml-1">End Date</label>
-          <div className="relative">
-            <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
-            <input 
-              type="date" 
-              value={end} 
-              onChange={e => setEnd(e.target.value)}
-              className="w-full bg-dark-700 border border-dark-600 rounded-xl pl-10 pr-4 py-2 text-sm text-gray-200 outline-none focus:border-brand/50 transition-all" 
-            />
-          </div>
-        </div>
-      </div>
-      <p className="text-[10px] text-gray-500 mt-3 italic">* Leave dates empty to download ALL logs</p>
-    </div>
-  );
-};
+// LogExport removed as per request
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 interface NavItem { path: string; icon: React.ReactNode; label: string; }
@@ -564,12 +488,6 @@ const FinOpsDashboard = () => {
         <div className="glass-panel rounded-2xl overflow-hidden">
           <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
             <h3 className="font-semibold flex items-center gap-2"><DollarSign size={18} className="text-emerald-400" /> Top Savings Opportunities</h3>
-            <button 
-              onClick={() => handleCSVDownload('/finops/top-savings', 'savings_opportunities.csv')}
-              className="text-xs flex items-center gap-1.5 text-gray-400 hover:text-emerald-400 transition-colors bg-dark-700/50 px-2 py-1 rounded border border-dark-600"
-            >
-              <Download size={13} /> Export
-            </button>
           </div>
           {svLoad ? <Spinner /> : (
             <div className="divide-y divide-dark-700/50">
@@ -695,12 +613,6 @@ const ComplianceDashboard = () => {
             <h3 className="font-semibold flex items-center gap-2"><AlertTriangle size={18} className="text-yellow-400" /> Recent Violations</h3>
             <div className="flex items-center gap-3">
               <span className="text-xs text-gray-500">{violations?.length ?? 0} records</span>
-              <button 
-                onClick={() => handleCSVDownload('/compliance/export/violations', 'compliance_violations.csv')}
-                className="text-xs flex items-center gap-1.5 text-gray-400 hover:text-purple-400 transition-colors bg-dark-700/50 px-2 py-1 rounded border border-dark-600"
-              >
-                <Download size={13} /> Export CSV
-              </button>
             </div>
           </div>
           {vlLoad ? <Spinner /> : (
@@ -789,12 +701,6 @@ const ITAdminDashboard = () => {
           <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
             <h3 className="font-semibold flex items-center gap-2"><Activity size={18} className="text-cyan-400" /> Recent Alerts</h3>
             <div className="flex items-center gap-2">
-              <button 
-                onClick={() => handleCSVDownload('/alerts/export', 'alerts_export.csv')}
-                className="text-xs bg-dark-700 hover:bg-dark-600 border border-dark-600 text-gray-300 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
-              >
-                <Download size={13}/> Export CSV
-              </button>
               <button className="text-xs bg-dark-600 hover:bg-dark-500 border border-dark-500 text-gray-300 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"><CheckCircle size={13}/> Acknowledge All</button>
             </div>
           </div>
