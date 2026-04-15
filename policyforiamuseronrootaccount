@@ -1,0 +1,43 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "CloudGuardResourceMonitoring",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeInstances",
+                "s3:ListAllMyBuckets",
+                "s3:GetBucketTagging",
+                "s3:GetBucketLocation",
+                "s3:GetEncryptionConfiguration",
+                "s3:GetBucketLogging",
+                "s3:GetBucketVersioning",
+                "s3:GetBucketPolicyStatus",
+                "lambda:ListFunctions",
+                "lambda:ListTags"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "CloudGuardIAMMonitoring",
+            "Effect": "Allow",
+            "Action": [
+                "iam:ListUsers",
+                "iam:ListMFADevices",
+                "iam:ListAccessKeys",
+                "iam:ListAttachedUserPolicies",
+                "iam:ListUserPolicies"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "CloudGuardMetricsAndLogs",
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:GetMetricStatistics",
+                "cloudtrail:LookupEvents"
+            ],
+            "Resource": "*"
+        }
+    ]
+}

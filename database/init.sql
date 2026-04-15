@@ -12,8 +12,23 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'viewer',
+    aws_account_id UUID, -- Foreign key managed manually or via later constraint
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ============================================
+-- AWS ACCOUNTS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS aws_accounts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    aws_account_id VARCHAR(12) UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Add foreign key constraints separately for safety
+ALTER TABLE users ADD CONSTRAINT fk_user_account FOREIGN KEY (aws_account_id) REFERENCES aws_accounts(id) ON DELETE SET NULL;
+
 
 -- ============================================
 -- ROLE MIGRATION (idempotent)
@@ -60,6 +75,7 @@ CREATE TABLE IF NOT EXISTS resources (
     resource_type VARCHAR(100) NOT NULL,
     region VARCHAR(100) NOT NULL,
     owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    aws_account_id UUID REFERENCES aws_accounts(id) ON DELETE SET NULL,
     tags JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -155,19 +171,28 @@ CREATE TABLE IF NOT EXISTS resource_metrics (
 CREATE INDEX IF NOT EXISTS idx_resource_metrics_updated ON resource_metrics(last_updated);
 
 -- ============================================
+-- SEED: AWS ACCOUNTS
+-- ============================================
+INSERT INTO aws_accounts (id, name, aws_account_id) VALUES
+    ('a0000000-0000-0000-0000-000000000001', 'Alpha Cluster', '123456789012'),
+    ('b0000000-0000-0000-0000-000000000002', 'Beta Production', '987654321098')
+ON CONFLICT (aws_account_id) DO NOTHING;
+
+-- ============================================
 -- SEED: ALL ROLE USERS
 -- Password for all: admin123 (bcrypt hashed)
 -- ============================================
-INSERT INTO users (email, password_hash, role) VALUES
-    ('admin@test.com',           '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin'),
-    ('admin@cloudguard.io',      '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'cloud_admin'),
-    ('finops@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'finops_manager'),
-    ('compliance@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'compliance_manager'),
-    ('itadmin@cloudguard.io',    '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'it_admin'),
-    ('viewer@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'viewer')
+INSERT INTO users (email, password_hash, role, aws_account_id) VALUES
+    ('admin@test.com',           '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin', 'a0000000-0000-0000-0000-000000000001'),
+    ('admin@cloudguard.io',      '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'cloud_admin', 'a0000000-0000-0000-0000-000000000001'),
+    ('finops@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'finops_manager', 'a0000000-0000-0000-0000-000000000001'),
+    ('compliance@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'compliance_manager', 'b0000000-0000-0000-0000-000000000002'),
+    ('itadmin@cloudguard.io',    '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'it_admin', 'b0000000-0000-0000-0000-000000000002'),
+    ('viewer@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'viewer', 'b0000000-0000-0000-0000-000000000002')
 ON CONFLICT (email) DO UPDATE SET
     role = EXCLUDED.role,
-    password_hash = EXCLUDED.password_hash;
+    password_hash = EXCLUDED.password_hash,
+    aws_account_id = EXCLUDED.aws_account_id;
 
 -- ============================================
 -- SEED: DEFAULT COMPLIANCE RULES
@@ -230,228 +255,3 @@ INSERT INTO compliance_rules (name, description, weight, condition_json, categor
         'performance'
     )
 ON CONFLICT DO NOTHING;
-
--- ============================================
--- AWS RESOURCES TABLE (Boto3 Integration)
--- ============================================
-CREATE TABLE IF NOT EXISTS aws_resources (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    aws_resource_id VARCHAR(255) UNIQUE NOT NULL,
-    resource_type VARCHAR(50) NOT NULL,
-    cloud_provider VARCHAR(10) DEFAULT 'aws',
-    region VARCHAR(50),
-    metadata JSONB DEFAULT '{}',
-    status VARCHAR(50),
-    last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    resource_id UUID REFERENCES resources(id) ON DELETE SET NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_aws_resources_type ON aws_resources(resource_type);
-CREATE INDEX IF NOT EXISTS idx_aws_resources_aws_id ON aws_resources(aws_resource_id);
-CREATE INDEX IF NOT EXISTS idx_aws_resources_last_seen ON aws_resources(last_seen);
-
--- ============================================
--- AWS METRICS TABLE (CloudWatch data)
--- ============================================
-CREATE TABLE IF NOT EXISTS aws_metrics (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    aws_resource_id VARCHAR(255) NOT NULL,
-    metric_name VARCHAR(100) NOT NULL,
-    metric_value FLOAT NOT NULL,
-    unit VARCHAR(50),
-    period_seconds INT DEFAULT 300,
-    timestamp TIMESTAMPTZ NOT NULL,
-    collected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(aws_resource_id, metric_name, timestamp)
-);
-
-CREATE INDEX IF NOT EXISTS idx_aws_metrics_resource ON aws_metrics(aws_resource_id);
-CREATE INDEX IF NOT EXISTS idx_aws_metrics_timestamp ON aws_metrics(timestamp);
-CREATE INDEX IF NOT EXISTS idx_aws_metrics_name ON aws_metrics(metric_name);
-
--- ============================================
--- AWS COMPLIANCE CHECKS TABLE
--- ============================================
-CREATE TABLE IF NOT EXISTS aws_compliance_checks (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    aws_resource_id VARCHAR(255) NOT NULL,
-    check_type VARCHAR(100) NOT NULL,
-    check_passed BOOLEAN NOT NULL,
-    details JSONB DEFAULT '{}',
-    scanned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_compliance_checks_resource ON aws_compliance_checks(aws_resource_id);
-CREATE INDEX IF NOT EXISTS idx_compliance_checks_passed ON aws_compliance_checks(check_passed);
-
--- ============================================
--- EXTEND EXISTING TABLES (data_source tag)
--- ============================================
-DO $$
-BEGIN
-    BEGIN
-        ALTER TABLE resources ADD COLUMN aws_resource_id VARCHAR(255);
-    EXCEPTION WHEN duplicate_column THEN NULL;
-    END;
-    BEGIN
-        ALTER TABLE resources ADD COLUMN data_source VARCHAR(20) DEFAULT 'simulated';
-    EXCEPTION WHEN duplicate_column THEN NULL;
-    END;
-    BEGIN
-        ALTER TABLE usage_logs ADD COLUMN data_source VARCHAR(20) DEFAULT 'simulated';
-    EXCEPTION WHEN duplicate_column THEN NULL;
-    END;
-END $$;
-
--- ============================================
--- AWS ACCOUNTS TABLE (STS Multi-Account)
--- Stores Role ARN only — NEVER stores access keys
--- ============================================
-CREATE TABLE IF NOT EXISTS aws_accounts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    account_name VARCHAR(255) NOT NULL,
-    account_id VARCHAR(12) NOT NULL,
-    role_arn VARCHAR(255) NOT NULL,
-    external_id VARCHAR(255),
-    regions TEXT[] DEFAULT '{us-east-1}',
-    is_active BOOLEAN DEFAULT TRUE,
-    last_scanned TIMESTAMPTZ,
-    scan_status VARCHAR(20) DEFAULT 'pending'
-        CHECK (scan_status IN ('pending', 'scanning', 'success', 'failed')),
-    error_message TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_aws_accounts_active ON aws_accounts(is_active);
-CREATE INDEX IF NOT EXISTS idx_aws_accounts_status ON aws_accounts(scan_status);
-
--- Add account linkage to aws_resources
-DO $$
-BEGIN
-    BEGIN
-        ALTER TABLE aws_resources ADD COLUMN account_id UUID REFERENCES aws_accounts(id) ON DELETE SET NULL;
-    EXCEPTION WHEN duplicate_column THEN NULL;
-    END;
-END $$;
-
-CREATE INDEX IF NOT EXISTS idx_aws_resources_account ON aws_resources(account_id);
-
--- ============================================
--- SEED: Default AWS Account (current setup)
--- Uses the same account that was configured via .env
--- Role ARN must be updated after creating the IAM role
--- ============================================
-INSERT INTO aws_accounts (account_name, account_id, role_arn, regions) VALUES
-    ('Primary Account', '310997740799', 'arn:aws:iam::310997740799:role/CloudGuardReadOnlyRole', '{ap-south-1}')
-ON CONFLICT DO NOTHING;
-
--- ============================================
--- INCOMING LOGS TABLE
--- ============================================
-CREATE TABLE IF NOT EXISTS incoming_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    log_data JSONB NOT NULL,
-    processed_finops BOOLEAN DEFAULT FALSE,
-    processed_compliance BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_incoming_logs_finops ON incoming_logs(processed_finops) WHERE processed_finops = false;
-CREATE INDEX IF NOT EXISTS idx_incoming_logs_compliance ON incoming_logs(processed_compliance) WHERE processed_compliance = false;
-
--- ============================================
--- USER ACTIVITY LOGS TABLE (Normalized IAM events)
--- ============================================
-CREATE TABLE IF NOT EXISTS user_activity_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    iam_user VARCHAR(255) NOT NULL,
-    service VARCHAR(100) NOT NULL,
-    action VARCHAR(255) NOT NULL,
-    resource_id VARCHAR(255),
-    source_ip VARCHAR(45),
-    region VARCHAR(50),
-    details JSONB DEFAULT '{}',
-    event_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(iam_user, service, action, resource_id, event_time)
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_activity_user ON user_activity_logs(iam_user);
-CREATE INDEX IF NOT EXISTS idx_user_activity_service ON user_activity_logs(service);
-CREATE INDEX IF NOT EXISTS idx_user_activity_time ON user_activity_logs(event_time);
-
--- ============================================
--- THRESHOLDS TABLE (IT Admin budget/spike rules)
--- ============================================
-CREATE TABLE IF NOT EXISTS thresholds (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    type VARCHAR(50) NOT NULL CHECK (type IN ('budget', 'cost_spike', 'cpu_usage', 'custom')),
-    metric VARCHAR(100) NOT NULL DEFAULT 'total_cost',
-    value FLOAT NOT NULL CHECK (value >= 0),
-    iam_user VARCHAR(255),
-    description TEXT,
-    active BOOLEAN DEFAULT TRUE,
-    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_thresholds_type ON thresholds(type);
-CREATE INDEX IF NOT EXISTS idx_thresholds_user ON thresholds(iam_user);
-CREATE INDEX IF NOT EXISTS idx_thresholds_active ON thresholds(active) WHERE active = true;
-
--- ============================================
--- SEED: Default Thresholds
--- ============================================
-INSERT INTO thresholds (type, metric, value, description) VALUES
-    ('budget', 'total_cost', 1000, 'Global monthly budget limit ($1000)'),
-    ('cost_spike', 'cost_change_pct', 20, 'Alert on >20% cost increase month-over-month'),
-    ('cpu_usage', 'avg_cpu', 5, 'Alert when avg CPU < 5% (idle resource)')
-ON CONFLICT DO NOTHING;
-
--- ============================================
--- ADD target_roles TO ALERTS (role-based routing)
--- ============================================
-DO $$
-BEGIN
-    BEGIN
-        ALTER TABLE alerts ADD COLUMN target_roles TEXT[] DEFAULT '{}';
-    EXCEPTION WHEN duplicate_column THEN NULL;
-    END;
-    BEGIN
-        ALTER TABLE alerts ADD COLUMN iam_user VARCHAR(255);
-    EXCEPTION WHEN duplicate_column THEN NULL;
-    END;
-END $$;
-
-CREATE INDEX IF NOT EXISTS idx_alerts_target_roles ON alerts USING GIN(target_roles);
-CREATE INDEX IF NOT EXISTS idx_alerts_iam_user ON alerts(iam_user);
-
--- ============================================
--- CLOUD RESOURCES TABLE (Unified FinOps view)
--- Populated by cloud_collector with idle flags
--- and FinOps recommendations per resource.
--- ============================================
-CREATE TABLE IF NOT EXISTS cloud_resources (
-    resource_id      VARCHAR(255) PRIMARY KEY,
-    type             VARCHAR(20)  NOT NULL CHECK (type IN ('ec2', 's3', 'lambda')),
-    name             VARCHAR(255),
-    state            VARCHAR(50)  NOT NULL DEFAULT 'unknown',
-    region           VARCHAR(50),
-    cpu              FLOAT,
-    size_mb          FLOAT,
-    last_activity    TIMESTAMPTZ,
-    estimated_cost   FLOAT        DEFAULT 0,
-    idle             BOOLEAN      NOT NULL DEFAULT FALSE,
-    recommendation   TEXT,
-    iam_user         VARCHAR(100),
-    ownership_source VARCHAR(50)  DEFAULT 'credentials',
-    last_seen        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    last_updated     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_cloud_resources_type     ON cloud_resources(type);
-CREATE INDEX IF NOT EXISTS idx_cloud_resources_idle     ON cloud_resources(idle);
-CREATE INDEX IF NOT EXISTS idx_cloud_resources_iam_user ON cloud_resources(iam_user);
-CREATE INDEX IF NOT EXISTS idx_cloud_resources_updated  ON cloud_resources(last_updated);
-

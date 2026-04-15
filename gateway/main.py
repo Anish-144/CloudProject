@@ -1,5 +1,4 @@
 import os
-import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -7,7 +6,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from databases import Database
-from routers import auth_router, ingest_router, alerts_router, public_alerts_router, finops_router, compliance_router, admin_router, activity_router, threshold_router
+import redis.asyncio as aioredis
+from routers import auth_router, ingest_router, alerts_router, finops_router, compliance_router, admin_router
 
 # ── Logging Setup ─────────────────────────────────────────────
 logging.basicConfig(
@@ -18,31 +18,22 @@ logger = logging.getLogger(__name__)
 
 # ── Database & Redis ──────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cloudguard_user:cloudguard_secret_2024@localhost:5432/cloudguard")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 database = Database(DATABASE_URL)
+redis_client: aioredis.Redis = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global redis_client
     logger.info("Starting CloudGuard Gateway...")
-    
-    # Retry logic for database connection
-    max_retries = 5
-    retry_interval = 2
-    for i in range(max_retries):
-        try:
-            await database.connect()
-            logger.info("Database connected.")
-            break
-        except Exception as e:
-            if i == max_retries - 1:
-                logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
-                raise
-            logger.warning(f"Database connection attempt {i+1} failed ({e}). Retrying in {retry_interval}s...")
-            await asyncio.sleep(retry_interval)
-            
+    await database.connect()
+    redis_client = aioredis.from_url(REDIS_URL, decode_responses=False)
+    logger.info("Database and Redis connected.")
     yield
     await database.disconnect()
+    await redis_client.close()
     logger.info("Connections closed.")
 
 
@@ -90,12 +81,9 @@ async def health():
 app.include_router(auth_router)
 app.include_router(ingest_router)
 app.include_router(alerts_router)
-app.include_router(public_alerts_router)
 app.include_router(finops_router)
 app.include_router(compliance_router)
 app.include_router(admin_router)
-app.include_router(activity_router)
-app.include_router(threshold_router)
 
 
 @app.exception_handler(Exception)

@@ -1,110 +1,61 @@
 # CloudGuard - Unified Cloud Governance Platform
 
-CloudGuard is a full-stack governance platform designed to monitor AWS environments with a focus on **FinOps** (cost optimization), **Compliance** (security/governance rules), and **IAM Activity Tracking**.
+CloudGuard is a full-stack application designed for cloud governance, focusing on **FinOps** (cost optimization), **Compliance** (security rules), and **Real-time Alerting**.
 
-## 🚀 Key Features
+## 🚀 Getting Started
 
-*   **IAM User Activity Monitoring**: Real-time normalization of IAM logs into actionable audit trails.
-*   **FinOps Cost Analysis**: Per-user cost breakdown and 30-day forecasting.
-*   **Threshold-based Alerting**: Set budget and cost-spike thresholds to prevent runaway spending.
-*   **Compliance Engine**: Automated rule-checking (S3 public access, MFA, encryption, etc.).
-*   **Role-Based Access Control**: Alerts are automatically routed to specific roles (FinOps Manager, IT Admin, etc.).
-*   **Real-time Streaming**: Live alert feed using Redis Pub/Sub and SSE.
+### Prerequisites
+- [Docker & Docker Compose](https://docs.docker.com/get-docker/)
+- [Node.js v18+](https://nodejs.org/) (optional, for local frontend development)
+- [Python 3.11+](https://www.python.org/) (optional, for local gateway development)
 
----
+### Quick Start (Docker)
+The easiest way to run the entire stack is using Docker Compose:
+
+1.  **Clone the repository** (if not already local).
+2.  **Start all services**:
+    ```bash
+    docker compose up -d
+    ```
+### Service Access
+| Service | Link | Description |
+| :--- | :--- | :--- |
+| **Frontend** | [http://localhost:3000](http://localhost:3000) | Main Platform Dashboard (starts at Login) |
+| **API Docs** | [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs) | Backend Gateway Swagger Docs |
+| **Alert API** | [http://localhost:8003](http://localhost:8003) | Direct Alert Service Hub |
+
+### Default Credentials (pwd: admin123)
+- **Cloud Admin**: `admin@cloudguard.io`
+- **FinOps Manager**: `finops@cloudguard.io`
+- **Compliance Manager**: `compliance@cloudguard.io`
+- **IT Admin**: `itadmin@cloudguard.io`
 
 ## 🏗️ Architecture
 
-- **Frontend**: React + Vite + Tailwind CSS.
-- **Gateway**: FastAPI entry point with role-based auth.
-- **Cloud Collector**: Boto3-based orchestrator for single-account AWS monitoring.
+- **Frontend**: React + Vite + Tailwind CSS + Lucide Icons.
+- **Gateway**: FastAPI + Postgres (asyncpg) + Redis (pub/sub for alerts).
 - **Engines**: 
-    - **FinOps Engine**: Detects idle resources, spikes, and budget overruns.
-    - **Compliance Engine**: Evaluates resources against governance rules.
-- **Alert Service**: Centralized alert management and role-based routing.
-- **Database**: PostgreSQL (Persistent storage) & Redis (Event streaming).
+    - **FinOps Engine**: Analyzes cost metrics and finds waste.
+    - **Compliance Engine**: Validates resources against governance rules.
+- **Data Persistence**: Postgres for relational data, Redis for caching and real-time event streaming (SSE).
+
+## 🛠️ Typical Workflow
+
+1.  **Develop Logic**: Add new routers in `gateway/routers.py` and logic in the respective engine folders.
+2.  **Test API**: Use the FastAPI swagger docs at `http://localhost:8000/api/v1/docs`.
+3.  **UI Updates**: Modify components in `frontend/src/App.tsx`.
+4.  **Rebuild**: If any core logic or Dockerfiles change, run `docker compose up --build -d`.
+
+## 🩺 Troubleshooting
+
+- **Blank Screen / Login Not Appearing**: 
+    - **Check Debug Logs**: Open Browser Console (**F12**) and look for `[DEBUG]` messages. They track the routing and auth state.
+    - **Hard Refresh**: Press `Ctrl + Shift + R` to clear browser cache.
+    - **Clear State**: If you see unauthorized errors, open Console and type `localStorage.clear()` followed by a refresh.
+- **Connection Refused / Network Error**: 
+    - Verify Gateway is healthy: [http://localhost:8000/health](http://localhost:8000/health).
+    - Ensure Docker containers are running: `docker compose ps`.
+    - Restart stack: `docker compose down && docker compose up -d`.
 
 ---
-
-## 🛠️ Setup & Execution Guide
-
-### 1. Prerequisites
-- [Docker Decor & Docker Compose](https://docs.docker.com/get-docker/)
-- [Git](https://git-scm.com/downloads)
-- AWS IAM User with Read-Only access (for the `cloud_collector`).
-
-### 2. Installation
-Clone the repository and enter the directory:
-```bash
-git clone https://github.com/Anish-144/CloudProject.git
-cd CloudProject
-```
-
-### 3. Obtain AWS Access Keys
-If you don't have AWS credentials yet, follow these steps:
-1.  Log in to the [AWS Console](https://aws.amazon.com/console/) and search for **IAM**.
-2.  In the sidebar, click **Users** and select your IAM user (ensure it has `ReadOnlyAccess`).
-3.  Click the **Security credentials** tab.
-4.  Find the **Access keys** section and click **Create access key**.
-5.  Select **Command Line Interface (CLI)**, check the confirmation box, and click **Next**.
-6.  Click **Create access key** and immediately copy/save both the **Access Key ID** and **Secret Access Key**.
-7.  **Warning**: You will never be able to see the Secret Key again after closing this screen.
-
-### 4. Environment Configuration
-The `.env` file is excluded from Git for security. You must create it from the template:
-```bash
-cp .env.example .env
-```
-Open the `.env` file and fill in your **AWS credentials**:
-- `AWS_ACCESS_KEY_ID`: Your IAM Key ID (starting with `AKIA...`)
-- `AWS_SECRET_ACCESS_KEY`: Your IAM Secret Key.
-- `AWS_DEFAULT_REGION`: e.g., `ap-south-1`.
-
-### 4. Run the Platform
-Start all services in the background:
-```bash
-docker compose up --build -d
-```
-*Note: The `--build` flag is required whenever code changes or new files are added.*
-
----
-
-## 🩺 System Monitoring & Troubleshooting
-
-### View Container Logs
-To see what is happening inside the services (useful for debugging):
-```bash
-# All services
-docker compose logs -f
-
-# Specific service (e.g. collector)
-docker compose logs -f cloud_collector
-```
-
-### Common Issues
-- **Invalid Date**: If the UI shows "Invalid Date", ensure you have pulled the latest `App.tsx` and run `docker compose up --build -d`.
-- **AuthFailure (AWS)**: Check your `.env` file. Ensure `AWS_ACCESS_KEY_ID` contains the `AKIA...` key and NOT the secret key.
-- **Collector Errors**: Ensure your IAM user has permissions for `ec2:DescribeInstances`, `s3:ListAllMyBuckets`, and `iam:ListUsers`.
-
----
-
-## 📊 Access Interfaces
-| Service | URL | Note |
-| :--- | :--- | :--- |
-| **Frontend** | [http://localhost:3000](http://localhost:3000) | Login: `admin@cloudguard.io` / `admin123` |
-| **API Docs** | [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs) | Interactive Swagger UI |
-| **Alert Service** | [http://localhost:8003/health](http://localhost:8003/health) | Alert management health check |
-
----
-
-## 🛠️ Development Workflow
-1.  **Code Changes**: After modifying files, run `docker compose up --build -d` to refresh the containers.
-2.  **Updating Repo**: 
-    ```bash
-    git pull origin main
-    docker compose up --build -d
-    ```
-3.  **Secrets**: Never commit your `.env` file. Use `.env.example` to document new variables.
-
----
-Developed for secure, transparent, and cost-efficient cloud operations.
+Developed for secure and cost-efficient cloud operations.

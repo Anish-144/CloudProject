@@ -57,11 +57,8 @@ class LogEntry(BaseModel):
     logging_enabled: Optional[bool] = None
     in_private_subnet: Optional[bool] = None
     daily_cost: Optional[float] = None
+    aws_account_id: Optional[str] = None
     timestamp: Optional[datetime] = None
-    # IAM user fields
-    user: Optional[str] = None
-    service: Optional[str] = None
-    action: Optional[str] = None
 
 
 class LogBatch(BaseModel):
@@ -77,14 +74,12 @@ class IngestResponse(BaseModel):
 class AlertOut(BaseModel):
     id: UUID
     type: str
-    source_id: Optional[UUID] = None
+    source_id: Optional[UUID]
     severity: str
     message: str
-    details: Optional[dict] = None
+    details: Optional[dict]
     status: str
     priority: float
-    target_roles: Optional[list[str]] = []
-    iam_user: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -127,101 +122,30 @@ class UserOut(BaseModel):
     id: UUID
     email: str
     role: str
+    aws_account_id: Optional[UUID] = None
+    aws_account_name: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-# ── User Activity Models ─────────────────────────────────────
-class UserActivityOut(BaseModel):
+class ResourceOut(BaseModel):
     id: UUID
-    iam_user: str
-    service: str
-    action: str
-    resource_id: Optional[str] = None
-    source_ip: Optional[str] = None
-    region: Optional[str] = None
-    details: Optional[dict] = None
-    event_time: datetime
-
-    class Config:
-        from_attributes = True
-
-
-# ── Threshold Models ─────────────────────────────────────────
-class ThresholdCreate(BaseModel):
-    type: str = Field(..., pattern="^(budget|cost_spike|cpu_usage|custom)$")
-    metric: str = "total_cost"
-    value: float = Field(..., ge=0)
-    iam_user: Optional[str] = None
-    description: Optional[str] = None
-
-
-class ThresholdOut(BaseModel):
-    id: UUID
-    type: str
-    metric: str
-    value: float
-    iam_user: Optional[str] = None
-    description: Optional[str] = None
-    active: bool
+    cloud_provider: str
+    resource_type: str
+    region: str
+    aws_account_name: Optional[str] = None
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-# ── Per-User Cost Model ──────────────────────────────────────
-class UserCostOut(BaseModel):
-    iam_user: str
-    total_cost_30d: float
+class AccountStats(BaseModel):
+    account_id: UUID
+    account_name: str
+    aws_id: str
+    user_count: int
     resource_count: int
-    avg_daily_cost: float
-
-
-# ── Admin Resource Monitoring Models ─────────────────────────
-class AdminOverview(BaseModel):
-    total_resources: int
-    running_resources: int
-    idle_resources: int
-    estimated_savings: float
-    compliance_score: float
-
-
-class AdminResource(BaseModel):
-    resource_id: str
-    type: str
-    name: Optional[str] = None
-    state: str
-    region: Optional[str] = None
-    cpu: Optional[float] = None
-    size_mb: Optional[float] = None
-    last_activity: Optional[datetime] = None
-    estimated_cost: float = 0.0
-    idle: bool = False
-    recommendation: Optional[str] = None
-    iam_user: Optional[str] = None
-    last_updated: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
-class UserSummaryOut(BaseModel):
-    iam_user: str
-    resource_count: int
-    idle_resources: int
     total_cost: float
-
-
-class FinOpsResourceSummaryOut(BaseModel):
-    total_cost: float
-    idle_cost: float
-    potential_savings: float
-
-
-class ComplianceSummaryOut(BaseModel):
-    risky_users: int
-    policy_issues: int
-    recommendations: list[str]

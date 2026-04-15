@@ -4,33 +4,22 @@
 
 @layer utilities {
   .glass-panel {
-    @apply dark:bg-dark-800/60 bg-white/70 backdrop-blur-xl border dark:border-dark-700/50 border-gray-200/50 shadow-2xl;
+    @apply bg-dark-800/80 backdrop-blur-md border border-dark-700 shadow-xl;
   }
 }
 
-/* Custom Scrollbar for a premium feel */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 dark:bg-dark-600 rounded-full border-2 border-transparent bg-clip-padding;
+  background: #374151;
+  border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-gray-400 dark:bg-dark-500;
-}
-
-/* Smooth transitions for theme switching */
-* {
-  @apply transition-colors duration-200;
-}
-
-body {
-  @apply antialiased;
+  background: #4B5563;
 }
