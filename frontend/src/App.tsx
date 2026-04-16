@@ -8,8 +8,12 @@ import {
   Download, AlertCircle, BarChart, Calendar
 =======
   LogOut, PiggyBank, Cpu, Monitor, Settings, Database, Download, Calendar,
+<<<<<<< HEAD
   Globe, Zap, Moon, Sun
 >>>>>>> f79aacfd0bc790d68202603431c151319038c798
+=======
+  Globe, Zap, Moon, Sun, AlertCircle, BarChart
+>>>>>>> a8b7305 (old configuration)
 } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
@@ -284,8 +288,10 @@ const fetchCompliance = () => axios.get(`${API_BASE}/compliance/score`).then(r =
 const fetchViolations = () => axios.get(`${API_BASE}/compliance/violations?limit=20`).then(r => r.data);
 const fetchAlerts    = (limit = 20) => axios.get(`${API_BASE}/alerts?limit=${limit}`).then(r => r.data);
 const fetchAdminUsers = () => axios.get(`${API_BASE}/admin/users`).then(r => r.data);
-const fetchAdminResources = () => axios.get(`${API_BASE}/admin/resources`).then(r => r.data);
-const fetchAccountStats = () => axios.get(`${API_BASE}/admin/stats/by-account`).then(r => r.data);
+const fetchAdminResources = (type?: string) => axios.get(`${API_BASE}/admin/resources${type ? `?type=${type}` : ''}`).then(r => r.data);
+const fetchAdminOverview = () => axios.get(`${API_BASE}/admin/overview`).then(r => r.data);
+const fetchFinOpsResourceSummary = () => axios.get(`${API_BASE}/finops/resources/summary`).then(r => r.data);
+const fetchUserSummary = () => axios.get(`${API_BASE}/admin/stats/by-account`).then(r => r.data);
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 const MetricCard = ({ title, value, sub, icon: Icon, color }: any) => (
@@ -659,7 +665,7 @@ const ITAdminDashboard = () => {
 
   const headerActions = <ThemeToggle />;
 
-  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
   (alerts ?? []).forEach((a: any) => { counts[a.severity as keyof typeof counts] = (counts[a.severity as keyof typeof counts] ?? 0) + 1; });
   const total = (alerts ?? []).length;
   const acknowledged = (alerts ?? []).filter((a: any) => a.status === 'acknowledged').length;
@@ -736,6 +742,7 @@ const ITAdminDashboard = () => {
   );
 };
 
+<<<<<<< HEAD
 // ─── CLOUD ADMIN DASHBOARD ────────────────────────────────────────────────────
 <<<<<<< HEAD
 // Resource type badges
@@ -1204,217 +1211,578 @@ const ExportCenter = () => {
 
 =======
 >>>>>>> f79aacfd0bc790d68202603431c151319038c798
+=======
+// ─── CLOUD ADMIN DASHBOARD components ───
+>>>>>>> a8b7305 (old configuration)
 
+// Resource type badges
+const RESOURCE_ICONS: Record<string, React.ReactNode> = {
+  ec2:    <Server size={12} className="text-cyan-400" />,
+  s3:     <Database size={12} className="text-amber-400" />,
+  lambda: <Activity size={12} className="text-purple-400" />,
+  iam:    <Users size={12} className="text-brand" />,
+};
 
-// ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
-const LoginScreen = ({ onLogin }: { onLogin: (token: string, role: string, email: string) => void }) => {
-  const [email, setEmail] = useState('admin@cloudguard.io');
-  const [password, setPassword] = useState('admin123');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const roles = [
-    { label: 'Cloud Admin',        email: 'admin@cloudguard.io'      },
-    { label: 'FinOps Manager',     email: 'finops@cloudguard.io'     },
-    { label: 'Compliance Manager', email: 'compliance@cloudguard.io' },
-    { label: 'IT Admin',           email: 'itadmin@cloudguard.io'    },
-  ];
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('[DEBUG] Login Submit:', { email, apiBase: API_BASE });
-    setError('');
-    setLoading(true);
-    axios.post(`${API_BASE}/auth/login`, { email, password })
-      .then(res => {
-        const { access_token, role, email: userEmail } = res.data;
-        onLogin(access_token, role, userEmail);
-      })
-      .catch(err => {
-        if (!err.response) setError(`Network Error: Cannot reach API at ${API_BASE}`);
-        else if (err.response.status === 401) setError('Invalid email or password.');
-        else setError(err.response.data?.detail ?? `Error ${err.response.status}`);
-      })
-      .finally(() => setLoading(false));
+const ResourceTypeBadge = ({ type }: { type: string }) => {
+  const c: Record<string,string> = {
+    ec2:    'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
+    s3:     'bg-amber-500/10 text-amber-400 border-amber-500/30',
+    lambda: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+    iam:    'bg-brand/10 text-brand border-brand/30',
   };
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded border uppercase ${c[type] ?? 'bg-gray-500/10 text-gray-400 border-gray-500/30'}`}>
+      {RESOURCE_ICONS[type]}{type}
+    </span>
+  );
+};
+
+const IdleBadge = ({ idle }: { idle: boolean }) => idle
+  ? <span className="text-xs font-bold px-2 py-0.5 rounded border bg-amber-500/15 text-amber-400 border-amber-500/30">IDLE</span>
+  : <span className="text-xs font-bold px-2 py-0.5 rounded border bg-emerald-500/10 text-emerald-400 border-emerald-500/30">ACTIVE</span>;
+
+// Resources Tab
+const ResourcesTab = () => {
+  const { theme } = useTheme();
+  const [typeFilter, setTypeFilter] = React.useState<string>('all');
+  const [refreshKey, setRefreshKey] = React.useState(0);
+
+  const { data: overview, isLoading: ovLoad } = useQuery({
+    queryKey: ['admin-overview', refreshKey],
+    queryFn: fetchAdminOverview,
+    refetchInterval: 10_000,
+  });
+
+  const { data: resources, isLoading: resLoad } = useQuery({
+    queryKey: ['admin-resources', typeFilter, refreshKey],
+    queryFn: () => fetchAdminResources(typeFilter === 'all' ? undefined : typeFilter),
+    refetchInterval: 30_000,
+  });
+
+  const allResources: any[] = resources ?? [];
+  const idleCount = allResources.filter((r: any) => r.idle).length;
+  const types = ['all', 'ec2', 's3', 'lambda', 'iam'];
 
   return (
-    <div className="h-screen w-full flex items-center justify-center bg-dark-900 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-brand/5 via-dark-900 to-dark-900" />
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand/5 rounded-full blur-3xl" />
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
-
-      <div className="relative z-10 w-full max-w-md px-4">
-        <div className="text-center mb-8">
-          <div className="inline-flex p-3 bg-brand/20 border border-brand/30 rounded-2xl mb-4">
-            <Cloud size={32} className="text-brand" />
-          </div>
-          <h1 className="text-3xl font-bold text-white mb-1">CloudGuard</h1>
-          <p className="text-gray-400 text-sm">Cloud Governance Platform</p>
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      {ovLoad ? <Spinner /> : (
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          <MetricCard title="Total Resources"  value={overview?.total_resources ?? 0}    sub="Discovered by collector"  icon={Cloud}       color="text-brand" />
+          <MetricCard title="Running"          value={overview?.running_resources ?? 0}  sub="Currently active"          icon={Server}      color="text-emerald-400" />
+          <MetricCard title="Idle Resources"   value={overview?.idle_resources ?? 0}     sub="Wasting cost right now"   icon={Activity}    color="text-amber-400" />
+          <MetricCard title="Est. Savings"     value={`$${(overview?.estimated_savings ?? 0).toFixed(2)}`} sub="Stop idle to reclaim" icon={DollarSign} color="text-emerald-400" />
+          <MetricCard title="Compliance"       value={`${overview?.compliance_score ?? 0}%`} sub="Policy adherence"     icon={ShieldCheck} color={(overview?.compliance_score ?? 0) > 80 ? 'text-emerald-400' : 'text-orange-400'} />
         </div>
+      )}
 
-        <div className="glass-panel rounded-2xl p-8 border border-dark-700 shadow-2xl">
-          <h2 className="text-lg font-semibold text-white mb-6">Sign in to your account</h2>
-          {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl mb-4 text-sm">{error}</div>}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Email</label>
-              <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20 transition-all" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Resource Table */}
+        <div className="lg:col-span-2 glass-panel rounded-2xl overflow-hidden flex flex-col h-full">
+          <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <Server size={17} className="text-cyan-500" />
+              <h3 className="font-semibold text-sm dark:text-white text-gray-900">AWS Resources</h3>
+              {resLoad && <div className="h-3.5 w-3.5 animate-spin rounded-full border-t border-brand border-r" />}
             </div>
-            <div>
-              <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Password</label>
-              <input type="password" value={password} onChange={e=>setPassword(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20 transition-all" />
-            </div>
-            <button type="submit" disabled={loading}
-              className="w-full bg-brand hover:bg-blue-500 text-white font-semibold py-2.5 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-2">
-              {loading ? <><div className="animate-spin rounded-full h-4 w-4 border-t-2 border-white/50 border-r-2" /> Signing in…</> : 'Sign In'}
-            </button>
-          </form>
-
-          <div className="mt-6 pt-5 border-t border-dark-700">
-            <p className="text-xs text-gray-500 mb-3 font-medium uppercase tracking-wider">Quick login (pwd: admin123)</p>
-            <div className="grid grid-cols-2 gap-2">
-              {roles.map(r=>(
-                <button key={r.email} onClick={()=>setEmail(r.email)}
-                  className="text-xs bg-dark-700 hover:bg-dark-600 border border-dark-600 text-gray-300 px-3 py-2 rounded-lg transition-colors text-left">
-                  <span className="block font-medium">{r.label}</span>
-                  <span className="text-gray-500 truncate block">{r.email}</span>
+            <div className="flex gap-1.5 p-1 dark:bg-dark-900/50 bg-gray-100 rounded-xl border dark:border-dark-700 border-gray-200">
+              {types.map(t => (
+                <button key={t} id={`resource-filter-${t}`}
+                  onClick={() => setTypeFilter(t)}
+                  className={`px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg border transition-all ${
+                    typeFilter === t
+                      ? 'bg-brand text-white border-brand shadow-sm'
+                      : 'dark:text-gray-400 text-gray-500 border-transparent hover:dark:text-gray-200 hover:text-gray-900'
+                  }`}>
+                  {t === 'all' ? 'All' : t}
                 </button>
               ))}
             </div>
           </div>
+
+          {idleCount > 0 && (
+            <div className="bg-amber-500/8 border-b border-amber-500/20 px-5 py-2.5 flex items-center gap-2">
+              <AlertTriangle size={13} className="text-amber-400 shrink-0" />
+              <p className="text-xs text-amber-300">
+                <strong>{idleCount} idle {idleCount === 1 ? 'resource' : 'resources'}</strong> detected — stopping them could save <strong>${(overview?.estimated_savings ?? 0).toFixed(2)}</strong>/month
+              </p>
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="text-[10px] font-bold uppercase tracking-wider dark:text-gray-400 text-gray-500 dark:bg-dark-800/60 bg-gray-50/50">
+                <tr>{['Type','Resource ID','IAM User','State','CPU / Size','Activity','Cost/mo','Status','Action'].map(h=>(
+                  <th key={h} className="px-4 py-3 whitespace-nowrap">{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y dark:divide-dark-700/50 divide-gray-100">
+                {allResources.map((r: any, i: number) => (
+                  <tr key={i} className={`dark:hover:bg-dark-800/50 hover:bg-gray-50 transition-colors ${r.idle ? 'dark:bg-amber-900/10 bg-amber-50/50' : ''}`}>
+                    <td className="px-4 py-3"><ResourceTypeBadge type={r.type} /></td>
+                    <td className="px-4 py-3 text-[11px] dark:text-gray-200 text-gray-800 font-mono max-w-[140px] truncate" title={r.resource_id}>{r.name || r.resource_id}</td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md dark:bg-dark-700 bg-gray-100 border dark:border-dark-600 border-gray-200 text-[10px] font-bold dark:text-gray-300 text-gray-600 uppercase">
+                        <Users size={12} className="text-brand opacity-70" />
+                        {r.iam_user || 'Unknown'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border shadow-sm ${r.state === 'running' || r.state === 'active' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' : 'dark:bg-gray-500/10 bg-gray-100 dark:text-gray-400 text-gray-500 border-gray-500/30'}`}>{r.state}</span>
+                    </td>
+                    <td className="px-4 py-3 text-[11px] font-medium dark:text-gray-300 text-gray-600 tracking-tight">
+                      {r.cpu != null ? <span className={Number(r.cpu) > 80 ? 'text-red-500' : ''}>{r.cpu}% CPU</span> : r.size_mb != null ? `${r.size_mb} MB` : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-[11px] dark:text-gray-500 text-gray-400">{r.last_activity ? new Date(r.last_activity).toLocaleDateString() : '—'}</td>
+                    <td className="px-4 py-3 text-[11px] font-bold dark:text-gray-200 text-gray-800">{Number(r.estimated_cost) > 0 ? `$${Number(r.estimated_cost).toFixed(2)}` : <span className="text-emerald-500">Free</span>}</td>
+                    <td className="px-4 py-3"><IdleBadge idle={r.idle} /></td>
+                    <td className="px-4 py-3">
+                      {r.idle || r.type === 'ec2' ? (
+                        <button id={`action-${r.resource_id}`}
+                          className="text-[10px] font-bold uppercase tracking-wider bg-brand/10 hover:bg-brand/20 text-brand border border-brand/30 px-2.5 py-1 rounded-lg transition-all shadow-sm">
+                          Optimize
+                        </button>
+                      ) : <span className="text-xs text-gray-400 opacity-30">—</span>}
+                    </td>
+                  </tr>
+                ))}
+                {!resLoad && allResources.length === 0 && (
+                  <tr><td colSpan={8} className="py-16 text-center text-gray-500">
+                    <Cloud size={28} className="mx-auto mb-2 opacity-30" />
+                    No resources found. Collector may still be running its first cycle.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Live Alert Stream */}
+        <div className="h-[560px]"><AlertFeed /></div>
+      </div>
+    </div>
+  );
+};
+
+const CloudAdminDashboard = () => {
+  const { theme } = useTheme();
+  const [tab, setTab] = useState<'overview'|'resources'|'users'|'export'>('overview');
+  const { data: fp,         isLoading: fpLoad } = useQuery({ queryKey: ['finops'],      queryFn: fetchFinOps });
+  const { data: comp,       isLoading: cpLoad } = useQuery({ queryKey: ['compliance'],  queryFn: fetchCompliance });
+  const { data: trends,     isLoading: tdLoad } = useQuery({ queryKey: ['trends'],      queryFn: fetchTrends });
+  const { data: adminUsers, isLoading: auLoad } = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers, enabled: tab === 'users' });
+  const { data: finRes,     isLoading: fResLoad } = useQuery({ queryKey: ['finops-res-sum'], queryFn: fetchFinOpsResourceSummary });
+  const { data: usum,       isLoading: uLoad } = useQuery({ queryKey: ['user-sum'], queryFn: fetchUserSummary });
+
+  const nav: NavItem[] = [
+    { path:'/dashboard/admin',      icon:<Crown size={17}/>,       label:'Admin Overview' },
+    { path:'/dashboard/finops',     icon:<TrendingDown size={17}/>, label:'FinOps'         },
+    { path:'/dashboard/compliance', icon:<ShieldCheck size={17}/>,  label:'Compliance'     },
+    { path:'/dashboard/infra',      icon:<Monitor size={17}/>,      label:'Infrastructure' },
+    { path:'export',                icon:<Download size={17}/>,     label:'Export Center'  },
+  ];
+
+  const trendChart = {
+    labels: trends?.map((t:any)=>t.date)??[],
+    datasets:[{ label:'Daily Cost ($)', data:trends?.map((t:any)=>t.cost)??[], borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.08)', borderWidth:2, fill:true, tension:0.4, pointRadius:3 }]
+  };
+
+  const roleColors: Record<string,string> = {
+    cloud_admin:'bg-purple-500/20 text-purple-400 border-purple-500/30',
+    admin:'bg-purple-500/20 text-purple-400 border-purple-500/30',
+    finops_manager:'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    compliance_manager:'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+    it_admin:'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+    viewer:'bg-gray-500/20 text-gray-400 border-gray-500/30',
+  };
+
+  return (
+    <Layout nav={nav}>
+      <div className="space-y-6 animate-in fade-in duration-500">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-3xl font-bold flex items-center gap-3 mb-1 dark:text-white text-gray-900"><Crown className="text-yellow-500" /> Cloud Administration</h1>
+            <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Full platform visibility · Resource monitoring · User management</p>
+          </div>
+          <div className="flex dark:bg-dark-800 bg-gray-50 border dark:border-dark-600 border-gray-200 rounded-xl p-1 gap-1 shadow-sm">
+            {(['overview','resources','users','export'] as const).map(t=>(
+              <button key={t} id={`admin-tab-${t}`} onClick={()=>setTab(t)}
+                className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${tab===t?'bg-brand text-white shadow-sm':'dark:text-gray-400 text-gray-500 hover:dark:text-gray-200 hover:text-gray-900'}`}>
+                {t==='overview' ? 'Overview' : t==='resources' ? '🔍 Resources' : t==='users' ? 'Users' : 'Export'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── OVERVIEW ── */}
+        {tab === 'overview' && (
+          <>
+            {(fpLoad||cpLoad) ? <Spinner /> : (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <MetricCard title="Savings Potential"   value={`$${(fp?.total_savings_potential??0).toLocaleString()}`} sub="Cloud waste detected"     icon={DollarSign}   color="text-emerald-400"/>
+                <MetricCard title="Compliance Score"    value={`${comp?.overall_score??0}%`}                           sub={`${comp?.active_violations??0} violations`} icon={ShieldCheck}  color={comp?.overall_score>80?'text-emerald-400':'text-orange-400'}/>
+                <MetricCard title="Critical Violations" value={comp?.critical_violations??0}                           sub="Requires immediate action" icon={AlertTriangle} color="text-red-400"/>
+                <MetricCard title="Idle Resources"      value={fp?.idle_resources??0}                                  sub="Running < 5% CPU"          icon={Activity}     color="text-yellow-400"/>
+              </div>
+            )}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 glass-panel rounded-2xl p-6">
+                <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><BarChart2 size={18} className="text-brand"/>Cost Trend — Last 30 Days</h3>
+                {tdLoad ? <Spinner /> : (
+                  <div className="h-52">
+                    <Line 
+                      data={trendChart} 
+                      options={{ 
+                        responsive:true, 
+                        maintainAspectRatio:false, 
+                        plugins:{legend:{display:false}}, 
+                        scales:{ 
+                          y:{ grid:{color:theme === 'dark' ? '#1f2937' : '#e5e7eb'}, ticks:{color:theme === 'dark' ? '#9ca3af' : '#6b7280', font:{size:10}} }, 
+                          x:{ grid:{display:false}, ticks:{color:theme === 'dark' ? '#9ca3af' : '#6b7280', maxTicksLimit:8, font:{size:10}} } 
+                        } 
+                      }} 
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="h-80"><AlertFeed /></div>
+            </div>
+            {cpLoad ? null : (
+              <div className="glass-panel rounded-2xl p-6">
+                <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><ShieldCheck size={18} className="text-purple-500"/>Compliance by Category</h3>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  {Object.entries(comp?.by_category??{}).map(([cat,val]:any)=>(
+                    <div key={cat} className="p-4 dark:bg-dark-800 bg-gray-50 rounded-xl border dark:border-dark-600 border-gray-100 shadow-sm">
+                      <div className="flex justify-between mb-2">
+                        <span className="text-sm dark:text-gray-300 text-gray-600 font-medium capitalize">{cat.replace(/_/g,' ')}</span>
+                        <span className={`text-sm font-bold ${val>80?'text-emerald-500':'text-orange-500'}`}>{val}%</span>
+                      </div>
+                      <div className="w-full dark:bg-dark-900 bg-gray-100 rounded-full h-1.5 shadow-inner">
+                        <div className={`h-1.5 rounded-full ${val>80?'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.2)]':'bg-orange-500'}`} style={{width:`${val}%`}}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              <div className="glass-panel rounded-2xl p-6">
+                  <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><DollarSign size={18} className="text-emerald-500"/>FinOps Resource Summary</h3>
+                  {fResLoad ? <Spinner /> : (
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center p-3 dark:bg-dark-800 bg-gray-50 rounded-lg border dark:border-dark-600 border-gray-100 shadow-sm">
+                        <span className="dark:text-gray-400 text-gray-500 font-medium">Total Running Cost</span>
+                        <span className="text-xl font-bold dark:text-white text-gray-900">${(finRes?.total_cost??0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between items-center p-3 dark:bg-dark-800 bg-gray-50 rounded-lg border dark:border-dark-600 border-gray-100 shadow-sm">
+                        <span className="dark:text-gray-400 text-gray-500 font-medium">Total Idle Cost</span>
+                        <span className="text-xl font-bold text-amber-500 dark:text-amber-400">${(finRes?.idle_cost??0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between items-center p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/30 shadow-sm">
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider text-xs">Potential Savings</span>
+                        <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">${(finRes?.potential_savings??0).toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
+              </div>
+              
+              <div className="glass-panel rounded-2xl p-6 overflow-hidden flex flex-col h-full max-h-80">
+                  <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><Users size={18} className="text-brand"/>Leaderboard</h3>
+                  {uLoad ? <Spinner /> : (
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-dark-600">
+                      {!(usum?.length) ? <p className="text-gray-500 text-sm text-center py-4 italic">No data collected yet</p> : (usum).map((u:any, i:number) => (
+                         <div key={i} className="flex flex-col gap-2 p-3 dark:bg-dark-800 bg-white rounded-lg border dark:border-dark-600 border-gray-100 hover:border-brand/30 transition-all shadow-sm">
+                           <div className="flex justify-between items-center">
+                             <div className="flex items-center gap-2">
+                               <div className="w-6 h-6 rounded-full bg-brand/10 border border-brand/20 flex items-center justify-center text-brand text-[10px] font-bold shrink-0 shadow-sm">{u.iam_user.charAt(0).toUpperCase()}</div>
+                               <span className="text-sm font-semibold dark:text-gray-200 text-gray-800 truncate max-w-[150px]">{u.iam_user}</span>
+                             </div>
+                             <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">${u.total_cost.toFixed(0)}</span>
+                           </div>
+                           <div className="flex justify-between text-[10px] font-medium dark:text-gray-500 text-gray-400 uppercase tracking-tight">
+                             <span>{u.resource_count} resources</span>
+                             <span className={u.idle_resources > 0 ? "text-amber-600 dark:text-amber-400" : ""}>{u.idle_resources} idle</span>
+                           </div>
+                         </div>
+                      ))}
+                    </div>
+                  )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── RESOURCES ── */}
+        {tab === 'resources' && <ResourcesTab />}
+
+        {/* ── USERS ── */}
+        {tab === 'users' && (
+          <div className="glass-panel rounded-2xl overflow-hidden">
+            <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
+              <h3 className="font-semibold flex items-center gap-2"><Users size={18} className="text-yellow-400"/>User Management</h3>
+              <span className="text-xs text-gray-500">{adminUsers?.length??0} users registered</span>
+            </div>
+            {auLoad ? <Spinner /> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="text-xs text-gray-400 bg-dark-800/60">
+                    <tr>{['Email','Role','Created'].map(h=><th key={h} className="px-6 py-3 font-medium">{h}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-dark-700/50">
+                    {(adminUsers??[]).map((u:any,i:number)=>(
+                      <tr key={i} className="hover:bg-dark-800/50 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-7 h-7 rounded-full bg-brand/20 border border-brand/30 flex items-center justify-center text-brand text-xs font-bold shrink-0">{u.email.charAt(0).toUpperCase()}</div>
+                            <span className="text-sm dark:text-gray-200 text-gray-700 font-medium">{u.email}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={`text-xs font-semibold px-2 py-1 rounded border ${roleColors[u.role]??'bg-gray-500/20 text-gray-400 border-gray-500/30'}`}>{getRoleLabel(u.role)}</span>
+                        </td>
+                        <td className="px-6 py-4 text-xs text-gray-500">{new Date(u.created_at).toLocaleDateString()}</td>
+                      </tr>
+                    ))}
+                    {!adminUsers?.length && <tr><td colSpan={3} className="py-12 text-center text-gray-500">No users found</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── EXPORT ── */}
+        {tab === 'export' && <ExportCenter />}
+      </div>
+    </Layout>
+  );
+};
+
+const ExportCenter = () => {
+  const [start, setStart] = useState(new Date(Date.now() - 86400000).toISOString().split('T')[0]);
+  const [end, setEnd] = useState(new Date().toISOString().split('T')[0]);
+  const [loading, setLoading] = useState<string | null>(null);
+
+  const handleExport = async (type: 'alerts' | 'usage') => {
+    setLoading(type);
+    try {
+      const url = `${API_BASE}/admin/export/${type}?start_date=${start}&end_date=${end}`;
+      const response = await axios.get(url, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'text/csv' });
+      const dlUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = dlUrl;
+      link.setAttribute('download', `${type}_export_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err: any) {
+      console.error('Export failed:', err);
+      alert(`Download failed (500): ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className="glass-panel rounded-2xl p-8 space-y-8 max-w-4xl mx-auto border border-dark-700 shadow-2xl">
+      <div className="flex items-center gap-4 mb-2">
+        <div className="p-3 bg-brand/20 rounded-2xl border border-brand/30">
+          <Download size={32} className="text-brand" />
+        </div>
+        <div>
+          <h2 className="text-2xl font-bold dark:text-white text-gray-900">Data Export Center</h2>
+          <p className="dark:text-gray-400 text-gray-500 text-sm">Generate and download comprehensive system reports</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-dark-800/50 p-6 rounded-2xl border border-dark-700">
+        <div className="space-y-2">
+          <label className="text-xs font-bold uppercase tracking-wider text-gray-500 flex items-center gap-2">
+            <Calendar size={14} /> Start Date
+          </label>
+          <input 
+            type="date" 
+            value={start} 
+            onChange={(e) => setStart(e.target.value)}
+            className="w-full bg-dark-900 border border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand transition-all font-medium text-white"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-xs font-bold uppercase tracking-wider text-gray-500 flex items-center gap-2">
+            <Calendar size={14} /> End Date
+          </label>
+          <input 
+            type="date" 
+            value={end} 
+            onChange={(e) => setEnd(e.target.value)}
+            className="w-full bg-dark-900 border border-dark-600 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-brand transition-all font-medium text-white"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="glass-panel rounded-2xl p-6 border border-dark-700 hover:border-brand/30 transition-all group">
+          <div className="flex items-start justify-between mb-4">
+            <div className="p-2.5 bg-yellow-500/10 rounded-xl border border-yellow-500/20 group-hover:bg-yellow-500/20 transition-all">
+              <Bell size={24} className="text-yellow-400" />
+            </div>
+            {loading === 'alerts' && <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-brand" />}
+          </div>
+          <h3 className="text-lg font-bold mb-2">System Alerts Log</h3>
+          <p className="text-sm text-gray-400 mb-6 leading-relaxed">Includes security findings, idle resource warnings, and system status changes.</p>
+          <button 
+            onClick={() => handleExport('alerts')}
+            disabled={!!loading}
+            className="w-full py-3 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <Download size={16} /> Export Alerts CSV
+          </button>
+        </div>
+
+        <div className="glass-panel rounded-2xl p-6 border border-dark-700 hover:border-brand/30 transition-all group">
+          <div className="flex items-start justify-between mb-4">
+            <div className="p-2.5 bg-brand/10 rounded-xl border border-brand/20 group-hover:bg-brand/20 transition-all">
+              <BarChart size={24} className="text-brand" />
+            </div>
+            {loading === 'usage' && <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-brand" />}
+          </div>
+          <h3 className="text-lg font-bold mb-2">Resource Usage Metrics</h3>
+          <p className="text-sm text-gray-400 mb-6 leading-relaxed">Granular CPU, memory, and cost data for all discovered AWS accounts.</p>
+          <button 
+            onClick={() => handleExport('usage')}
+            disabled={!!loading}
+            className="w-full py-3 bg-brand hover:bg-blue-500 text-white rounded-xl font-bold text-sm transition-all shadow-lg shadow-brand/20 flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <Download size={16} /> Export Metrics CSV
+          </button>
         </div>
       </div>
     </div>
   );
 };
 
-// ─── PROTECTED ROUTE ──────────────────────────────────────────────────────────
-const ProtectedRoute = ({ allowed, children }: { allowed: string[]; children: React.ReactNode }) => {
-  const { role, authed, logout } = useAuth();
-  const location = useLocation();
 
-  console.log('[DEBUG] ProtectedRoute:', { path: location.pathname, authed, role, allowed });
+// ─── Login Page ───────────────────────────────────────────────────────────────
+const LoginPage = () => {
+  const [email, setEmail] = useState('admin@cloudguard.io');
+  const [password, setPassword] = useState('admin123');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const { login } = useAuth();
+  const navigate = Navigate;
 
-  if (!authed) {
-    console.log('[DEBUG] ProtectedRoute: Not authed, redirecting to /');
-    return <Navigate to="/" replace />;
-  }
-  
-  if (!allowed.includes(role)) {
-    const fallback = getRoleDashboard(role);
-    console.log('[DEBUG] ProtectedRoute: Role not allowed, fallback to:', fallback);
-    // Loop protection: if we're already at the fallback path, or role is missing
-    if (location.pathname === fallback || !role || fallback === '/login' || fallback === '/') {
-      console.warn('[DEBUG] ProtectedRoute: Loop detected or missing role, forcing logout');
-      logout();
-      return <Navigate to="/" replace />;
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const response = await axios.post('http://localhost:8000/api/v1/auth/login', { email, password });
+      login(response.data.access_token, response.data.role, response.data.email);
+      window.location.href = getRoleDashboard(response.data.role);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Login failed');
+    } finally {
+      setLoading(false);
     }
-    return <Navigate to={fallback} replace />;
-  }
-  return <>{children}</>;
+  };
+
+  return (
+    <div className="h-screen w-screen flex flex-col items-center justify-center bg-dark-900 overflow-hidden relative">
+      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-brand/10 rounded-full blur-[120px]" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-500/10 rounded-full blur-[120px]" />
+      
+      <div className="glass-panel p-10 rounded-3xl w-full max-w-md border border-dark-700 shadow-2xl relative z-10">
+        <div className="flex flex-col items-center mb-8">
+          <div className="p-4 bg-brand rounded-2xl shadow-[0_0_30px_rgba(59,130,246,0.3)] mb-4">
+            <Cloud size={40} className="text-white" />
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight mb-1 bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">CloudGuard</h1>
+          <p className="text-gray-500 text-sm font-medium">Enterprise Cloud Governance</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-500 ml-1">Email Address</label>
+            <div className="relative">
+              <Users className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-dark-800 border border-dark-700 rounded-xl pl-12 pr-4 py-3 text-sm focus:border-brand focus:ring-1 focus:ring-brand outline-none transition-all" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-500 ml-1">Secret Key</label>
+            <div className="relative">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-dark-800 border border-dark-700 rounded-xl pl-12 pr-4 py-3 text-sm focus:border-brand focus:ring-1 focus:ring-brand outline-none transition-all" />
+            </div>
+          </div>
+          
+          {error && <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-medium animate-in slide-in-from-top-1">{error}</div>}
+          
+          <button type="submit" disabled={loading} className="w-full bg-brand hover:bg-blue-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-brand/20 transition-all transform active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2">
+            {loading ? <div className="h-5 w-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : 'Enter Platform'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 };
 
-// ─── AUTH PROVIDER ────────────────────────────────────────────────────────────
-const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [authed, setAuthed] = useState(false);
-  const [role, setRole]     = useState('');
-  const [email, setEmail]   = useState('');
-  const [loading, setLoading] = useState(true);
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+const AppContent = () => {
+  const { authed, role } = useAuth();
+  return (
+    <Routes>
+      <Route path="/login" element={!authed ? <LoginPage /> : <Navigate to={getRoleDashboard(role)} />} />
+      
+      {/* Role specific routes */}
+      <Route path="/dashboard/finops"      element={authed && role==='finops_manager' ? <FinOpsDashboard /> : <Navigate to="/login" />} />
+      <Route path="/dashboard/compliance"  element={authed && role==='compliance_manager' ? <ComplianceDashboard /> : <Navigate to="/login" />} />
+      <Route path="/dashboard/infra"       element={authed && role==='it_admin' ? <ITAdminDashboard /> : <Navigate to="/login" />} />
+      <Route path="/admin-overview"        element={(authed && (role==='cloud_admin' || role==='admin')) ? <CloudAdminDashboard /> : <Navigate to="/login" />} />
+      
+      <Route path="/" element={<Navigate to={authed ? getRoleDashboard(role) : '/login'} />} />
+      <Route path="*" element={<Navigate to="/" />} />
+    </Routes>
+  );
+};
 
-  useEffect(() => {
-    const token = localStorage.getItem('cloudguard_token');
-    const r     = localStorage.getItem('cloudguard_role') ?? '';
-    const e     = localStorage.getItem('cloudguard_email') ?? '';
-    
-    // Only auto-auth if we have BOTH a token and a non-empty role
-    if (token && r) {
-      setAuthToken(token);
-      setRole(r);
-      setEmail(e);
-      setAuthed(true);
-    } else if (token || r) {
-      // Inconsistent state, clear storage
-      ['cloudguard_token','cloudguard_role','cloudguard_email'].forEach(k=>localStorage.removeItem(k));
+export default function App() {
+  const [auth, setAuth] = useState<any>(() => {
+    const s = localStorage.getItem('cloudguard_auth');
+    if (s) {
+      const d = JSON.parse(s);
+      setAuthToken(d.token);
+      return d;
     }
-    setLoading(false);
-  }, []);
+    return { authed: false, role: '', email: '', token: '' };
+  });
 
-  const login = (token: string, userRole: string, userEmail: string) => {
-    localStorage.setItem('cloudguard_token', token);
-    localStorage.setItem('cloudguard_role',  userRole);
-    localStorage.setItem('cloudguard_email', userEmail);
+  const login = (token: string, role: string, email: string) => {
+    const d = { authed: true, role, email, token };
+    localStorage.setItem('cloudguard_auth', JSON.stringify(d));
     setAuthToken(token);
-    setRole(userRole);
-    setEmail(userEmail);
-    setAuthed(true);
+    setAuth(d);
   };
 
   const logout = () => {
-    ['cloudguard_token','cloudguard_role','cloudguard_email'].forEach(k=>localStorage.removeItem(k));
+    localStorage.removeItem('cloudguard_auth');
     delete axios.defaults.headers.common['Authorization'];
-    setRole(''); setEmail(''); setAuthed(false);
-    queryClient.clear();
+    setAuth({ authed: false, role: '', email: '', token: '' });
   };
 
-  if (loading) return (
-    <div className="h-screen flex items-center justify-center bg-dark-900">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-brand" />
-    </div>
-  );
-
   return (
-    <AuthContext.Provider value={{ authed, role, email, login, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
-
-// ─── APP ROUTES ───────────────────────────────────────────────────────────────
-const ADMIN  = ['cloud_admin','admin'];
-const FINOPS = ['finops_manager','cloud_admin','admin'];
-const COMP   = ['compliance_manager','compliance_officer','cloud_admin','admin'];
-const IT     = ['it_admin','cloud_admin','admin'];
-
-function AppRoutes() {
-  const { role, authed, login } = useAuth();
-  const location = useLocation();
-
-  console.log('[DEBUG] AppRoutes:', { path: location.pathname, authed, role });
-
-  return (
-    <Routes>
-      {/* Root path "/" now renders LoginScreen if not authenticated */}
-      <Route path="/"                   element={authed ? <Navigate to={getRoleDashboard(role)} replace /> : <LoginScreen onLogin={login} />} />
-      <Route path="/login"              element={<Navigate to="/" replace />} />
-      <Route path="/dashboard/finops"   element={<ProtectedRoute allowed={FINOPS}><FinOpsDashboard /></ProtectedRoute>} />
-      <Route path="/dashboard/compliance" element={<ProtectedRoute allowed={COMP}><ComplianceDashboard /></ProtectedRoute>} />
-      <Route path="/dashboard/infra"    element={<ProtectedRoute allowed={IT}><ITAdminDashboard /></ProtectedRoute>} />
-      <Route path="/admin-overview"     element={<ProtectedRoute allowed={ADMIN}><AdminLayout><AdminOverview /></AdminLayout></ProtectedRoute>} />
-      <Route path="/user-management"    element={<ProtectedRoute allowed={ADMIN}><AdminLayout><UserManagement /></AdminLayout></ProtectedRoute>} />
-      <Route path="/department-summary" element={<ProtectedRoute allowed={ADMIN}><AdminLayout><DepartmentSummary /></AdminLayout></ProtectedRoute>} />
-      <Route path="/resource-registry"  element={<ProtectedRoute allowed={ADMIN}><AdminLayout><ResourceRegistry /></AdminLayout></ProtectedRoute>} />
-      <Route path="/audit-logs"         element={<ProtectedRoute allowed={ADMIN}><AdminLayout><AuditLogs /></AdminLayout></ProtectedRoute>} />
-      <Route path="*"                   element={<Navigate to="/" replace />} />
-    </Routes>
-  );
-}
-
-// ─── MAIN APP ─────────────────────────────────────────────────────────────────
-export default function App() {
-  return (
-    <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <AuthContext.Provider value={{ ...auth, login, logout }}>
+          <BrowserRouter>
             <ErrorBoundary>
-              <AppRoutes />
+              <AppContent />
             </ErrorBoundary>
-          </AuthProvider>
-        </BrowserRouter>
-      </QueryClientProvider>
-    </ThemeProvider>
+          </BrowserRouter>
+        </AuthContext.Provider>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 }

@@ -47,6 +47,9 @@ def build_dedupe_key(alert_type: str, source_id: str, message: str) -> str:
 
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> a8b7305 (old configuration)
 # ─── Role Routing Map ─────────────────────────────────────────
 ALERT_ROLE_ROUTING = {
     "finops": ["finops_manager", "it_admin", "cloud_admin"],
@@ -75,8 +78,11 @@ async def subscribe_alerts():
             await asyncio.sleep(1)
 
 
+<<<<<<< HEAD
 =======
 >>>>>>> f79aacfd0bc790d68202603431c151319038c798
+=======
+>>>>>>> a8b7305 (old configuration)
 # ─── Models ───────────────────────────────────────────────────
 class AlertPayload(BaseModel):
     type: str
@@ -94,6 +100,10 @@ async def lifespan(app: FastAPI):
     await database.connect()
     redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
     logger.info("Connected to DB and Redis.")
+    
+    # Start Redis subscriber in background
+    asyncio.create_task(subscribe_alerts())
+    
     yield
     await database.disconnect()
     await redis_client.close()
@@ -148,6 +158,9 @@ async def receive_alert(payload: AlertPayload, from_stream: bool = False):
     })
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> a8b7305 (old configuration)
     # PROVAGATION: If alert came from API (not stream), broadcast it to Redis for live UI updates
     if not from_stream and redis_client:
         try:
@@ -158,6 +171,7 @@ async def receive_alert(payload: AlertPayload, from_stream: bool = False):
             logger.info(f"Broadcasted internal alert to stream: {payload.message[:60]}")
         except Exception as e:
             logger.error(f"Failed to broadcast alert: {e}")
+<<<<<<< HEAD
 =======
     # Publish to Redis pub/sub for SSE clients
     alert_notification = json.dumps({
@@ -170,6 +184,8 @@ async def receive_alert(payload: AlertPayload, from_stream: bool = False):
     })
     await redis_client.publish("alert_notifications", alert_notification)
 >>>>>>> f79aacfd0bc790d68202603431c151319038c798
+=======
+>>>>>>> a8b7305 (old configuration)
 
     logger.info(f"Stored alert [{payload.severity}] {payload.message[:60]} priority={priority}")
     return {"status": "created", "alert_id": str(alert_id), "priority": priority}
@@ -200,6 +216,6 @@ async def simulate_remediation(alert_id: str):
         "message": f"[AutoRemediation] Alert {alert_id} automatically resolved.",
         "timestamp": datetime.utcnow().isoformat(),
     }
-    await redis_client.publish("alert_notifications", json.dumps(remediation_event))
+    await redis_client.publish("alerts_stream", json.dumps(remediation_event))
     logger.info(f"Remediation simulated for alert {alert_id}")
     return remediation_event

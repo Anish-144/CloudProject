@@ -256,6 +256,9 @@ INSERT INTO compliance_rules (name, description, weight, condition_json, categor
     )
 ON CONFLICT DO NOTHING;
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> a8b7305 (old configuration)
 
 -- ============================================
 -- AWS RESOURCES TABLE (Boto3 Integration)
@@ -334,7 +337,11 @@ END $$;
 -- AWS ACCOUNTS TABLE (STS Multi-Account)
 -- Stores Role ARN only — NEVER stores access keys
 -- ============================================
+<<<<<<< HEAD
 CREATE TABLE IF NOT EXISTS aws_accounts (
+=======
+CREATE TABLE IF NOT EXISTS aws_accounts_v2 (
+>>>>>>> a8b7305 (old configuration)
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     account_name VARCHAR(255) NOT NULL,
     account_id VARCHAR(12) NOT NULL,
@@ -349,14 +356,23 @@ CREATE TABLE IF NOT EXISTS aws_accounts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+<<<<<<< HEAD
 CREATE INDEX IF NOT EXISTS idx_aws_accounts_active ON aws_accounts(is_active);
 CREATE INDEX IF NOT EXISTS idx_aws_accounts_status ON aws_accounts(scan_status);
+=======
+CREATE INDEX IF NOT EXISTS idx_aws_accounts_active ON aws_accounts_v2(is_active);
+CREATE INDEX IF NOT EXISTS idx_aws_accounts_status ON aws_accounts_v2(scan_status);
+>>>>>>> a8b7305 (old configuration)
 
 -- Add account linkage to aws_resources
 DO $$
 BEGIN
     BEGIN
+<<<<<<< HEAD
         ALTER TABLE aws_resources ADD COLUMN account_id UUID REFERENCES aws_accounts(id) ON DELETE SET NULL;
+=======
+        ALTER TABLE aws_resources ADD COLUMN account_id UUID REFERENCES aws_accounts_v2(id) ON DELETE SET NULL;
+>>>>>>> a8b7305 (old configuration)
     EXCEPTION WHEN duplicate_column THEN NULL;
     END;
 END $$;
@@ -368,7 +384,11 @@ CREATE INDEX IF NOT EXISTS idx_aws_resources_account ON aws_resources(account_id
 -- Uses the same account that was configured via .env
 -- Role ARN must be updated after creating the IAM role
 -- ============================================
+<<<<<<< HEAD
 INSERT INTO aws_accounts (account_name, account_id, role_arn, regions) VALUES
+=======
+INSERT INTO aws_accounts_v2 (account_name, account_id, role_arn, regions) VALUES
+>>>>>>> a8b7305 (old configuration)
     ('Primary Account', '310997740799', 'arn:aws:iam::310997740799:role/CloudGuardReadOnlyRole', '{ap-south-1, eu-north-1}')
 ON CONFLICT DO NOTHING;
 
@@ -493,6 +513,9 @@ BEGIN
     EXCEPTION WHEN duplicate_column THEN NULL;
     END;
 END $$;
+<<<<<<< HEAD
 
 =======
 >>>>>>> f79aacfd0bc790d68202603431c151319038c798
+=======
+>>>>>>> a8b7305 (old configuration)
