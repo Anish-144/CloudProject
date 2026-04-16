@@ -20,21 +20,32 @@ def get_real_token():
 
 HEADERS = get_real_token()
 
-# Create dummy resources
-RESOURCES = [f"00000000-0000-0000-0000-{str(i).zfill(12)}" for i in range(1, 10)]
+# Account UUIDs from init.sql
+ACCOUNT_ALPHA = "a0000000-0000-0000-0000-000000000001"
+ACCOUNT_BETA  = "b0000000-0000-0000-0000-000000000002"
+
+# Create dummy resources: 1-5 for Alpha, 6-9 for Beta
+RESOURCES_ALPHA = [f"00000000-0000-0000-0000-{str(i).zfill(12)}" for i in range(1, 6)]
+RESOURCES_BETA  = [f"00000000-0000-0000-0000-{str(i).zfill(12)}" for i in range(6, 10)]
 
 def generate_log():
+    # Pick an account
+    is_alpha = random.random() < 0.6 # 60% Alpha
+    account_id = ACCOUNT_ALPHA if is_alpha else ACCOUNT_BETA
+    resource_id = random.choice(RESOURCES_ALPHA if is_alpha else RESOURCES_BETA)
+
     # Occasionally generate a bad config to trigger compliance rules
-    bad_config = random.random() < 0.2
+    bad_config = random.random() < 0.15
     
     # Occasionally generate very low CPU for finops
     idle = random.random() < 0.2
 
     return {
-        "resource_id": random.choice(RESOURCES),
+        "resource_id": resource_id,
+        "aws_account_id": account_id,
         "cpu_usage": random.uniform(0.1, 4.0) if idle else random.uniform(10.0, 95.0),
         "memory_usage": random.uniform(20.0, 80.0),
-        "cost": random.uniform(5.0, 50.0),
+        "cost": random.uniform(5.0, 50.0) if is_alpha else random.uniform(8.0, 70.0),
         "public_access": True if bad_config else False,  # True violates No Public S3
         "encryption_at_rest": False if bad_config else True, # False violates Encryption Required
         "mfa_enabled": False if bad_config else True,

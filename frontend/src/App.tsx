@@ -3,8 +3,13 @@ import { BrowserRouter, Routes, Route, Link, useLocation, Navigate } from 'react
 import {
   ShieldCheck, TrendingDown, Bell, Cloud, Activity, AlertTriangle,
   CheckCircle, DollarSign, Server, Users, Crown, BarChart2, Lock,
+<<<<<<< HEAD
   LogOut, PiggyBank, Cpu, Monitor, Settings, Database, Sun, Moon,
   Download, AlertCircle, BarChart, Calendar
+=======
+  LogOut, PiggyBank, Cpu, Monitor, Settings, Database, Download, Calendar,
+  Globe, Zap, Moon, Sun
+>>>>>>> f79aacfd0bc790d68202603431c151319038c798
 } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
@@ -14,14 +19,23 @@ import {
 } from 'chart.js';
 import { Line, Doughnut, Bar } from 'react-chartjs-2';
 
+// Import new page components
+import { AdminOverview } from './pages/AdminOverview';
+import { UserManagement } from './pages/UserManagement';
+import { DepartmentSummary } from './pages/DepartmentSummary';
+import { ResourceRegistry } from './pages/ResourceRegistry';
+import { AuditLogs } from './pages/AuditLogs';
+
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, ArcElement, Filler);
 
-// ─── QueryClient (OUTSIDE component — prevents recreation on re-render) ───────
+const REFRESH_INTERVAL = parseInt(import.meta.env.VITE_DASHBOARD_REFRESH_INTERVAL || '30000', 10);
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000,       // cache 5 minutes
-      refetchOnWindowFocus: false,      // no refetch on tab switch
+      staleTime: Math.max(0, REFRESH_INTERVAL - 5000), // Ensure data is stale before next poll
+      refetchInterval: REFRESH_INTERVAL,              // Automatic background refresh
+      refetchOnWindowFocus: false,
       retry: 1,
     }
   }
@@ -29,17 +43,213 @@ const queryClient = new QueryClient({
 
 const API_BASE = 'http://localhost:8000/api/v1';
 
-// New API base for alert endpoints without v1
-const ALERT_API_BASE = 'http://localhost:8000/api';
+// ─── Theme Context ────────────────────────────────────────────────────────────
+interface ThemeCtx { theme: 'light' | 'dark'; toggleTheme: () => void; }
+const ThemeContext = createContext<ThemeCtx>({ theme: 'dark', toggleTheme: () => {} });
+export const useTheme = () => useContext(ThemeContext);
+
+// ─── Theme Provider ───────────────────────────────────────────────────────────
+const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('cloudguard_theme') as 'light' | 'dark' | null;
+    return saved || 'dark';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('cloudguard_theme', theme);
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
+
+  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+
+  return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+};
+
+// ─── Theme Toggle & Error Boundary ────────────────────────────────────────────
+const ThemeToggle = () => {
+  const ctx = useTheme();
+  if (!ctx) return null;
+  const { theme, toggleTheme } = ctx;
+  return (
+    <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-dark-700 transition-colors text-sm font-medium">
+      {theme === 'dark' ? <Sun size={17} className="text-yellow-400" /> : <Moon size={17} className="text-blue-400" />}
+      <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
+    </button>
+  );
+};
+
+class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean}> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: any, info: any) { console.error("Dashboard failed to load.", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="h-screen w-screen flex flex-col items-center justify-center bg-dark-900 p-4">
+          <div className="glass-panel rounded-2xl p-8 max-w-md border border-dark-700 text-center shadow-2xl">
+            <AlertTriangle className="mx-auto mb-4 text-red-500" size={48} />
+            <h2 className="text-2xl font-bold text-white mb-2">Dashboard failed to load.</h2>
+            <p className="text-gray-400 mb-6">Please refresh or check logs.</p>
+            <button onClick={() => window.location.reload()} className="px-6 py-2.5 bg-brand hover:bg-blue-500 text-white rounded-xl transition-all font-medium">Reload Dashboard</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ─── Admin Layout ───────────────────────────────────────────────────────────
+const AdminLayout = ({ children }: { children: React.ReactNode }) => {
+  const [clearModalOpen, setClearModalOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const location = useLocation();
+
+  const adminNav: NavItem[] = [
+    { path: '/admin-overview', icon: <Crown size={17}/>, label: 'Admin Overview' },
+    { path: '/user-management', icon: <Users size={17}/>, label: 'User Management' },
+    { path: '/department-summary', icon: <BarChart2 size={17}/>, label: 'Department Summary' },
+    { path: '/resource-registry', icon: <Database size={17}/>, label: 'Resource Registry' },
+    { path: '/audit-logs', icon: <Bell size={17}/>, label: 'Audit Logs' },
+  ];
+
+  const handleClearData = async () => {
+    setClearing(true);
+    try {
+      const response = await axios.post(`${API_BASE}/admin/clear-historical-data`);
+      console.log('Historical data cleared:', response.data);
+      alert(`✓ Success: ${response.data.message}\n\nDeleted Records:\n- finops_events: ${response.data.deleted_records.raw_finops_events}\n- compliance_logs: ${response.data.deleted_records.raw_compliance_logs}\n- infra_alerts: ${response.data.deleted_records.raw_infrastructure_alerts}`);
+      setClearModalOpen(false);
+    } catch (err: any) {
+      const errMsg = err.response?.data?.detail || err.message || 'Failed to clear data';
+      alert(`✗ Error: ${errMsg}`);
+      console.error('Clear data error:', err);
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const headerActions = (
+    <div className="flex flex-col gap-2 w-full">
+      <button
+        onClick={() => setClearModalOpen(true)}
+        title="Delete raw logs but preserve analytics"
+        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-400 hover:text-yellow-300 text-sm font-medium transition-all"
+      >
+        <Zap size={17} />
+        <span>Clear Past Data</span>
+      </button>
+      <ThemeToggle />
+    </div>
+  );
+
+  return (
+    <Layout nav={adminNav} headerActions={headerActions}>
+      {children}
+      <ClearDataModal 
+        isOpen={clearModalOpen}
+        isLoading={clearing}
+        onConfirm={handleClearData}
+        onCancel={() => setClearModalOpen(false)}
+      />
+    </Layout>
+  );
+};
+
+// ─── Clear Past Data Modal ─────────────────────────────────────────────────────
+interface ClearDataModalProps {
+  isOpen: boolean;
+  isLoading: boolean;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+}
+
+const ClearDataModal = ({ isOpen, isLoading, onConfirm, onCancel }: ClearDataModalProps) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="glass-panel rounded-2xl p-8 max-w-md border border-dark-700 shadow-2xl animate-in fade-in zoom-in duration-300">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 bg-yellow-500/20 rounded-lg border border-yellow-500/30">
+            <AlertTriangle size={24} className="text-yellow-400" />
+          </div>
+          <h2 className="text-2xl font-bold text-white">Clear Past Data?</h2>
+        </div>
+
+        <p className="text-gray-300 mb-2">
+          This will delete historical logs but keep analytics summaries used by graphs.
+        </p>
+        <div className="bg-dark-700/50 border border-dark-600 rounded-xl p-4 mb-6 text-sm">
+          <p className="text-gray-400 font-mono text-xs leading-relaxed">
+            <strong>Deleted:</strong><br/>
+            • raw_finops_events<br/>
+            • raw_compliance_logs<br/>
+            • raw_infrastructure_alerts<br/>
+            <br/>
+            <strong>Preserved:</strong><br/>
+            • analytics_cost_trends<br/>
+            • analytics_violation_summary<br/>
+            • analytics_resource_metrics
+          </p>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            disabled={isLoading}
+            className="flex-1 px-4 py-2.5 rounded-xl border border-dark-600 bg-dark-700 hover:bg-dark-600 text-gray-300 font-medium transition-all disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isLoading}
+            className="flex-1 px-4 py-2.5 rounded-xl bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/40 text-yellow-400 font-medium transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {isLoading ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-yellow-400/50 border-r-2" />
+                Clearing...
+              </>
+            ) : (
+              'Confirm'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ─── Auth Helpers ─────────────────────────────────────────────────────────────
 export const setAuthToken = (token: string) => {
   axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
 };
 
+// Setup axios interceptor for 403 errors
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 403) {
+      console.warn('[AUTH] 403 Forbidden - Access denied');
+      alert('Access Denied: You do not have permission to access this resource.');
+      // Optionally redirect to login or dashboard
+      window.location.href = '/';
+    }
+    return Promise.reject(error);
+  }
+);
+
+// removed handleCSVDownload
+
 // ─── Auth Context ─────────────────────────────────────────────────────────────
-interface AuthCtx { authed: boolean; role: string; email: string; login: (token: string, role: string, email: string) => void; logout: () => void; theme: 'light' | 'dark'; toggleTheme: () => void; }
-const AuthContext = createContext<AuthCtx>({ authed: false, role: '', email: '', login: () => {}, logout: () => {}, theme: 'dark', toggleTheme: () => {} });
+interface AuthCtx { authed: boolean; role: string; email: string; login: (token: string, role: string, email: string) => void; logout: () => void; }
+const AuthContext = createContext<AuthCtx>({ authed: false, role: '', email: '', login: () => {}, logout: () => {} });
 export const useAuth = () => useContext(AuthContext);
 
 // ─── Role Routing ─────────────────────────────────────────────────────────────
@@ -51,7 +261,7 @@ const getRoleDashboard = (role: string): string => {
     case 'compliance_officer': return '/dashboard/compliance';
     case 'it_admin':           return '/dashboard/infra';
     case 'cloud_admin':
-    case 'admin':              return '/dashboard/admin';
+    case 'admin':              return '/admin-overview';
     default:                   return '/login'; // Safer fallback
   }
 };
@@ -73,17 +283,9 @@ const fetchSavings   = () => axios.get(`${API_BASE}/finops/top-savings`).then(r 
 const fetchCompliance = () => axios.get(`${API_BASE}/compliance/score`).then(r => r.data);
 const fetchViolations = () => axios.get(`${API_BASE}/compliance/violations?limit=20`).then(r => r.data);
 const fetchAlerts    = (limit = 20) => axios.get(`${API_BASE}/alerts?limit=${limit}`).then(r => r.data);
-const fetchAlertSummary = () => axios.get(`${ALERT_API_BASE}/alerts/summary`).then(r => r.data);
-const fetchRecentAlerts = () => axios.get(`${ALERT_API_BASE}/alerts/recent`).then(r => r.data);
 const fetchAdminUsers = () => axios.get(`${API_BASE}/admin/users`).then(r => r.data);
-const fetchAdminOverview = () => axios.get(`${API_BASE}/admin/overview`).then(r => r.data);
-const fetchAdminResources = (type?: string) => {
-  const params = type ? `?resource_type=${type}` : '';
-  return axios.get(`${API_BASE}/admin/resources${params}`).then(r => r.data);
-};
-const fetchFinOpsResourceSummary = () => axios.get(`${API_BASE}/finops/resource-summary`).then(r => r.data);
-const fetchUserSummary = () => axios.get(`${API_BASE}/admin/user-summary`).then(r => r.data);
-const fetchComplianceSummary = () => axios.get(`${API_BASE}/compliance/summary`).then(r => r.data);
+const fetchAdminResources = () => axios.get(`${API_BASE}/admin/resources`).then(r => r.data);
+const fetchAccountStats = () => axios.get(`${API_BASE}/admin/stats/by-account`).then(r => r.data);
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 const MetricCard = ({ title, value, sub, icon: Icon, color }: any) => (
@@ -92,8 +294,8 @@ const MetricCard = ({ title, value, sub, icon: Icon, color }: any) => (
       <Icon size={80} />
     </div>
     <div className="relative z-10">
-      <p className="text-xs dark:text-gray-400 text-gray-500 font-medium mb-1 uppercase tracking-wider">{title}</p>
-      <p className="text-3xl font-bold dark:text-white text-gray-900 mb-1">{value}</p>
+      <p className="text-xs text-gray-400 font-medium mb-1 uppercase tracking-wider">{title}</p>
+      <p className="text-3xl font-bold text-white mb-1">{value}</p>
       <p className={`text-xs font-medium ${color}`}>{sub}</p>
     </div>
     <div className={`absolute bottom-0 left-0 h-0.5 w-full bg-gradient-to-r from-transparent ${color.replace('text-', 'via-').replace('400', '500').replace('emerald', 'emerald').replace('400','400')} to-transparent opacity-30`} />
@@ -102,12 +304,12 @@ const MetricCard = ({ title, value, sub, icon: Icon, color }: any) => (
 
 const SeverityBadge = ({ severity }: { severity: string }) => {
   const s: Record<string, string> = {
-    critical: 'dark:bg-red-500/20 bg-red-50 text-red-500 dark:text-red-400 border-red-500/30',
-    high:     'dark:bg-orange-500/20 bg-orange-50 text-orange-600 dark:text-orange-400 border-orange-500/30',
-    medium:   'dark:bg-yellow-500/20 bg-yellow-50 text-yellow-600 dark:text-yellow-400 border-yellow-500/30',
-    low:      'dark:bg-gray-500/20 bg-gray-50 text-gray-600 dark:text-gray-400 border-gray-500/30',
+    critical: 'bg-red-500/20 text-red-400 border-red-500/40',
+    high:     'bg-orange-500/20 text-orange-400 border-orange-500/40',
+    medium:   'bg-yellow-500/20 text-yellow-400 border-yellow-500/40',
+    low:      'bg-gray-500/20 text-gray-400 border-gray-500/40',
   };
-  return <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border shadow-sm ${s[severity] ?? s.low}`}>{severity}</span>;
+  return <span className={`text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${s[severity] ?? s.low}`}>{severity}</span>;
 };
 
 const Spinner = () => (
@@ -121,11 +323,8 @@ const AlertFeed = () => {
   const [items, setItems] = useState<any[]>([]);
   useEffect(() => {
     let alive = true;
-    const token = localStorage.getItem('cloudguard_token');
-    axios.get(`${ALERT_API_BASE}/alerts/recent?limit=10`).then(r => { if (alive) setItems(r.data); }).catch(() => {});
-    
-    // Pass token in query param for SSE auth
-    const sse = new EventSource(`${ALERT_API_BASE}/alerts/stream?token=${token}`);
+    axios.get(`${API_BASE}/alerts?limit=10`).then(r => { if (alive) setItems(r.data); }).catch(() => {});
+    const sse = new EventSource(`${API_BASE}/alerts/stream`);
     sse.onmessage = e => {
       try {
         const d = JSON.parse(e.data);
@@ -137,8 +336,8 @@ const AlertFeed = () => {
 
   return (
     <div className="glass-panel rounded-2xl flex flex-col h-full overflow-hidden">
-      <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex items-center justify-between">
-        <h3 className="font-semibold text-sm flex items-center gap-2 dark:text-white text-gray-900">
+      <div className="p-4 border-b border-dark-700 bg-dark-800 flex items-center justify-between">
+        <h3 className="font-semibold text-sm flex items-center gap-2">
           <Bell size={16} className="text-yellow-400" /> Live Alert Stream
         </h3>
         <span className="flex h-2.5 w-2.5 relative">
@@ -146,107 +345,93 @@ const AlertFeed = () => {
           <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
         </span>
       </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-2 dark:bg-transparent bg-white/50">
+      <div className="flex-1 overflow-y-auto p-2 space-y-2">
         {items.map((a, i) => (
-          <div key={i} className="p-3 dark:bg-dark-700/50 bg-white hover:dark:bg-dark-700 hover:bg-gray-50 rounded-lg border dark:border-dark-600 border-gray-100 transition-colors shadow-sm">
+          <div key={i} className="p-3 bg-dark-700/50 hover:bg-dark-700 rounded-lg border border-dark-600 transition-colors">
             <div className="flex justify-between items-center mb-1">
               <SeverityBadge severity={a.severity} />
-              <span className="text-xs text-gray-500">{new Date(a.timestamp || a.created_at).toLocaleTimeString()}</span>
+              <span className="text-xs text-gray-500">{new Date(a.created_at).toLocaleTimeString()}</span>
             </div>
-            <p className="text-xs dark:text-gray-300 text-gray-600 mt-1.5 leading-relaxed">{a.message}</p>
+            <p className="text-xs text-gray-300 mt-1.5 leading-relaxed">{a.message}</p>
           </div>
         ))}
-        {items.length === 0 && <p className="text-center text-gray-500 text-sm py-8 font-medium">Waiting for events…</p>}
+        {items.length === 0 && <p className="text-center text-gray-500 text-sm py-8">Waiting for events…</p>}
       </div>
     </div>
   );
 };
 
+// LogExport removed as per request
+
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 interface NavItem { path: string; icon: React.ReactNode; label: string; }
-const Sidebar = ({ navItems }: { navItems: NavItem[] }) => {
+interface SidebarProps { navItems: NavItem[]; headerActions?: React.ReactNode; }
+const Sidebar = ({ navItems, headerActions }: SidebarProps) => {
   const { pathname } = useLocation();
   const { email, role, logout } = useAuth();
+  
   return (
-    <aside className="w-64 glass-panel border-r dark:border-dark-700 border-gray-100 flex flex-col shrink-0">
-      <div className="p-5 flex items-center gap-3 border-b dark:border-dark-700 border-gray-100 italic font-mono">
+    <aside className="w-64 glass-panel border-r border-dark-700 flex flex-col shrink-0">
+      <div className="p-5 flex items-center gap-3 border-b border-dark-700">
         <div className="p-2 bg-brand rounded-lg shadow-[0_0_15px_rgba(59,130,246,0.5)]">
           <Cloud size={20} className="text-white" />
         </div>
         <div>
-          <span className="font-bold tracking-wide block dark:text-white text-gray-900">CloudGuard</span>
-          <span className="text-[10px] dark:text-gray-500 text-gray-400 uppercase tracking-widest font-bold">Governance</span>
+          <span className="font-bold tracking-wide block">CloudGuard</span>
+          <span className="text-[10px] text-gray-500 uppercase tracking-widest">Governance</span>
         </div>
       </div>
+      
       <nav className="flex-1 p-4 space-y-1">
-        {navItems.map(item => (
-          <Link key={item.path} to={item.path}>
-            <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-sm ${
-              pathname === item.path
-                ? 'bg-brand/10 text-brand border border-brand/20 font-semibold shadow-sm'
-                : 'dark:text-gray-400 text-gray-500 dark:hover:bg-dark-700 hover:bg-gray-100 dark:hover:text-gray-200 hover:text-gray-900'
-            }`}>
-              {item.icon}
-              <span>{item.label}</span>
-            </div>
-          </Link>
-        ))}
+        {navItems.map(item => {
+          const isActive = pathname === item.path || pathname.startsWith(item.path);
+          return (
+            <Link key={item.path} to={item.path}>
+              <div className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-sm ${
+                isActive
+                  ? 'bg-brand/10 text-brand border border-brand/20 font-semibold'
+                  : 'text-gray-400 hover:bg-dark-700 hover:text-gray-200'
+              }`}>
+                {item.icon}
+                <span>{item.label}</span>
+              </div>
+            </Link>
+          );
+        })}
       </nav>
-      <div className="p-4 border-t dark:border-dark-700 border-gray-100 space-y-2">
-        <div className="flex items-center gap-3 p-3 rounded-xl dark:bg-dark-700/50 bg-gray-50 border dark:border-dark-600 border-gray-200">
+      
+      {headerActions && <div className="px-4 py-3 border-t border-dark-700">{headerActions}</div>}
+      
+      <div className="p-4 border-t border-dark-700 space-y-2">
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-dark-700/50 border border-dark-600">
           <div className="w-8 h-8 rounded-full bg-brand/20 border border-brand/30 flex items-center justify-center text-brand font-bold text-sm shrink-0">
             {email.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-medium dark:text-gray-200 text-gray-900 truncate">{email}</p>
-            <p className="text-[10px] dark:text-gray-500 text-gray-400 mt-0.5">{getRoleLabel(role)}</p>
+            <p className="text-xs font-medium text-gray-200 truncate">{email}</p>
+            <p className="text-[10px] text-gray-500 mt-0.5">{getRoleLabel(role)}</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <ThemeToggle />
-          <button onClick={logout} className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg dark:text-gray-400 text-gray-500 dark:hover:text-red-400 hover:text-red-500 dark:hover:bg-red-500/10 hover:bg-red-500/5 transition-colors text-xs border border-transparent hover:border-red-500/20">
-            <LogOut size={14} /> Out
-          </button>
-        </div>
+        <button onClick={logout} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-500/10 transition-colors text-sm">
+          <LogOut size={15} /> Sign Out
+        </button>
       </div>
     </aside>
   );
 };
 
-const ThemeToggle = () => {
-  const { theme, toggleTheme } = useAuth();
-  return (
-    <button
-      onClick={toggleTheme}
-      className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg dark:text-gray-400 text-gray-500 dark:hover:text-brand hover:text-brand dark:hover:bg-brand/10 hover:bg-brand/5 transition-all text-xs border border-transparent hover:border-brand/20"
-      title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-    >
-      {theme === 'dark' ? <><Sun size={14} /> Light</> : <><Moon size={14} /> Dark</>}
-    </button>
-  );
-};
-
-const Layout = ({ children, nav }: { children: React.ReactNode; nav: NavItem[] }) => {
-  const { theme } = useAuth();
-  return (
-    <div className={`flex h-screen overflow-hidden ${theme === 'dark' ? 'bg-dark-900 text-gray-100' : 'bg-gray-50 text-gray-900'}`}>
-      <Sidebar navItems={nav} />
-      <main className="flex-1 overflow-y-auto relative bg-transparent">
-        <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-brand via-purple-500 to-brand opacity-30 z-10" />
-        <div className="p-8 pb-16 relative z-0">{children}</div>
-        {/* Dynamic Background */}
-        <div className="fixed inset-0 z-[-1] pointer-events-none overflow-hidden">
-          <div className="absolute top-0 left-1/4 w-[600px] h-[600px] dark:bg-brand/5 bg-brand/10 rounded-full blur-[120px] opacity-40 animate-pulse" />
-          <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] dark:bg-purple-500/5 bg-purple-500/10 rounded-full blur-[100px] opacity-30" />
-        </div>
-      </main>
-    </div>
-  );
-};
+const Layout = ({ children, nav, headerActions }: { children: React.ReactNode; nav: NavItem[]; headerActions?: React.ReactNode }) => (
+  <div className="flex h-screen overflow-hidden">
+    <Sidebar navItems={nav} headerActions={headerActions} />
+    <main className="flex-1 overflow-y-auto bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-dark-800 via-dark-900 to-dark-900 relative">
+      <div className="absolute top-0 w-full h-0.5 bg-gradient-to-r from-brand via-purple-500 to-brand opacity-50 z-10" />
+      <div className="p-8 pb-16">{children}</div>
+    </main>
+  </div>
+);
 
 // ─── FINOPS DASHBOARD ─────────────────────────────────────────────────────────
 const FinOpsDashboard = () => {
-  const { theme } = useAuth();
   const { data: fp, isLoading: fpLoad } = useQuery({ queryKey: ['finops'], queryFn: fetchFinOps });
   const { data: trends, isLoading: tdLoad } = useQuery({ queryKey: ['trends'], queryFn: fetchTrends });
   const { data: savings, isLoading: svLoad } = useQuery({ queryKey: ['savings'], queryFn: fetchSavings });
@@ -254,6 +439,8 @@ const FinOpsDashboard = () => {
   const nav: NavItem[] = [
     { path: '/dashboard/finops', icon: <TrendingDown size={17} />, label: 'FinOps Intelligence' },
   ];
+
+  const headerActions = <ThemeToggle />;
 
   const trendChart = {
     labels: trends?.map((t: any) => t.date) ?? [],
@@ -266,16 +453,16 @@ const FinOpsDashboard = () => {
   };
 
   return (
-    <Layout nav={nav}>
+    <Layout nav={nav} headerActions={headerActions}>
       <div className="space-y-6 animate-in fade-in duration-500">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-3 mb-1">
               <TrendingDown className="text-brand" /> FinOps Intelligence
             </h1>
-            <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Cost optimisation · Waste detection · Savings insights</p>
+            <p className="text-gray-400 text-sm">Cost optimisation · Waste detection · Savings insights</p>
           </div>
-          <span className="text-[10px] bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 px-3 py-1.5 rounded-full font-bold uppercase tracking-wider">Live Data</span>
+          <span className="text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-3 py-1.5 rounded-full font-medium">Live Data</span>
         </div>
 
         {fpLoad ? <Spinner /> : (
@@ -294,54 +481,37 @@ const FinOpsDashboard = () => {
           </div>
         )}
 
-        <div className="glass-panel rounded-2xl p-6 relative overflow-hidden">
-          <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><BarChart2 size={18} className="text-brand" /> Cost Trend — Last 30 Days</h3>
+        <div className="glass-panel rounded-2xl p-6">
+          <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-brand" /> Cost Trend — Last 30 Days</h3>
           {tdLoad ? <Spinner /> : (
             <div className="h-52">
-              <Line 
-                data={trendChart} 
-                options={{ 
-                  responsive: true, 
-                  maintainAspectRatio: false, 
-                  plugins: { legend: { display: false } }, 
-                  scales: { 
-                    y: { 
-                      grid: { color: theme === 'dark' ? '#1f2937' : '#e5e7eb' }, 
-                      ticks: { color: theme === 'dark' ? '#9ca3af' : '#6b7280', font: { size: 10 } } 
-                    }, 
-                    x: { 
-                      grid: { display: false }, 
-                      ticks: { color: theme === 'dark' ? '#9ca3af' : '#6b7280', maxTicksLimit: 8, font: { size: 10 } } 
-                    } 
-                  } 
-                }} 
-              />
+              <Line data={trendChart} options={{ responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#1f2937' }, ticks: { color: '#9ca3af' } }, x: { grid: { display: false }, ticks: { color: '#9ca3af', maxTicksLimit: 8 } } } }} />
             </div>
           )}
         </div>
 
-        <div className="glass-panel rounded-2xl overflow-hidden mb-6">
-          <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex justify-between items-center">
-            <h3 className="font-semibold flex items-center gap-2 dark:text-white text-gray-900"><DollarSign size={18} className="text-emerald-500" /> Top Savings Opportunities</h3>
+        <div className="glass-panel rounded-2xl overflow-hidden">
+          <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
+            <h3 className="font-semibold flex items-center gap-2"><DollarSign size={18} className="text-emerald-400" /> Top Savings Opportunities</h3>
           </div>
           {svLoad ? <Spinner /> : (
-            <div className="divide-y dark:divide-dark-700/50 divide-gray-100">
+            <div className="divide-y divide-dark-700/50">
               {(savings ?? []).slice(0, 6).map((item: any, i: number) => (
-                <div key={i} className="flex justify-between items-center px-6 py-4 dark:hover:bg-dark-800/50 hover:bg-gray-50 transition-colors">
+                <div key={i} className="flex justify-between items-center px-6 py-4 hover:bg-dark-800/50 transition-colors">
                   <div className="flex items-center gap-4">
-                    <div className="w-7 h-7 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 dark:text-emerald-400 text-xs font-bold shadow-sm">{i+1}</div>
+                    <div className="w-7 h-7 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-xs font-bold">{i+1}</div>
                     <div>
-                      <p className="text-sm font-semibold dark:text-gray-200 text-gray-800">{item.message}</p>
+                      <p className="text-sm font-medium text-gray-200">{item.message}</p>
                       <SeverityBadge severity={item.severity} />
                     </div>
                   </div>
                   <div className="text-right shrink-0 ml-4">
-                    <p className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">${parseFloat(item.details?.estimated_savings ?? 0).toFixed(0)}/mo</p>
-                    <button className="mt-1 text-[10px] font-bold uppercase tracking-wider dark:bg-dark-600 bg-white hover:dark:bg-emerald-500/20 hover:bg-emerald-50 dark:text-gray-400 text-gray-600 hover:text-emerald-600 dark:hover:text-emerald-400 px-3 py-1 rounded transition-colors border dark:border-dark-500 border-gray-200 hover:dark:border-emerald-500/30 hover:border-emerald-200 shadow-sm">Review</button>
+                    <p className="font-bold text-emerald-400 text-sm">${parseFloat(item.details?.estimated_savings ?? 0).toFixed(0)}/mo</p>
+                    <button className="mt-1 text-xs bg-dark-600 hover:bg-emerald-500/20 hover:text-emerald-400 text-gray-400 px-3 py-1 rounded transition-colors border border-dark-500 hover:border-emerald-500/30">Review</button>
                   </div>
                 </div>
               ))}
-              {!(savings?.length) && <p className="py-12 text-center text-gray-500 italic">No savings opportunities detected</p>}
+              {!(savings?.length) && <p className="py-12 text-center text-gray-500">No savings opportunities detected</p>}
             </div>
           )}
         </div>
@@ -355,12 +525,12 @@ const FinOpsDashboard = () => {
                 { label:'Overprovisioned',         desc:`${fp?.overprovisioned_resources??0} instances using < 30% of allocated`, badge:'Medium', cls:'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' },
                 { label:'Cost Spikes Detected',    desc:`${fp?.cost_spike_resources??0} resources with sudden cost spike`,   badge:'High',   cls:'text-orange-400 bg-orange-500/10 border-orange-500/20' },
               ].map((r,i) => (
-                <div key={i} className="flex justify-between items-center p-4 dark:bg-dark-700/50 bg-gray-50 rounded-xl border dark:border-dark-600 border-gray-100 dark:hover:bg-dark-700 hover:bg-gray-100 transition-colors">
+                <div key={i} className="flex justify-between items-center p-4 bg-dark-700/50 rounded-xl border border-dark-600 hover:bg-dark-700 transition-colors">
                   <div>
-                    <p className="font-medium text-sm dark:text-white text-gray-900">{r.label}</p>
-                    <p className="text-xs dark:text-gray-400 text-gray-500 mt-0.5">{r.desc}</p>
+                    <p className="font-medium text-sm text-white">{r.label}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{r.desc}</p>
                   </div>
-                  <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ml-4 shrink-0 shadow-sm ${r.cls}`}>{r.badge}</span>
+                  <span className={`text-xs font-bold px-3 py-1.5 rounded-lg border ml-4 shrink-0 ${r.cls}`}>{r.badge}</span>
                 </div>
               ))}
             </div>
@@ -380,17 +550,19 @@ const ComplianceDashboard = () => {
     { path: '/dashboard/compliance', icon: <ShieldCheck size={17} />, label: 'Compliance Posture' },
   ];
 
+  const headerActions = <ThemeToggle />;
+
   const donut = {
     labels: ['Compliant','Violations'],
     datasets: [{ data:[comp?.overall_score??0, 100-(comp?.overall_score??0)], backgroundColor:['#10b981','#f43f5e'], borderWidth:0, cutout:'78%' }]
   };
 
   return (
-    <Layout nav={nav}>
+    <Layout nav={nav} headerActions={headerActions}>
       <div className="space-y-6 animate-in fade-in duration-500">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3 mb-1 dark:text-white text-gray-900"><ShieldCheck className="text-purple-500" /> Compliance Posture</h1>
-          <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Framework adherence · Violations · Audit tracking</p>
+          <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><ShieldCheck className="text-purple-400" /> Compliance Posture</h1>
+          <p className="text-gray-400 text-sm">Framework adherence · Violations · Audit tracking</p>
         </div>
 
         {cpLoad ? <Spinner /> : (
@@ -407,32 +579,31 @@ const ComplianceDashboard = () => {
                 <div className="w-40 h-40 relative mb-5">
                   <Doughnut data={donut} options={{ responsive:true, cutout:'78%', plugins:{tooltip:{enabled:false}} }} />
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="text-4xl font-bold dark:text-white text-gray-900">{comp?.overall_score}%</span>
-                    <span className="text-xs dark:text-gray-400 text-gray-500 mt-0.5 font-medium">Compliance</span>
+                    <span className="text-4xl font-bold">{comp?.overall_score}%</span>
+                    <span className="text-xs text-gray-400 mt-0.5">Compliance</span>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 w-full">
-                  {/* ... */}
                   {[{l:'Critical',v:comp?.critical_violations??0,c:'text-red-400'},{l:'High',v:comp?.high_violations??0,c:'text-orange-400'},{l:'Medium',v:comp?.medium_violations??0,c:'text-yellow-400'},{l:'Low',v:comp?.low_violations??0,c:'text-blue-400'}].map(x=>(
-                    <div key={x.l} className="text-center p-2 dark:bg-dark-700/50 bg-gray-50 rounded-lg border dark:border-dark-600 border-gray-100">
+                    <div key={x.l} className="text-center p-2 bg-dark-700/50 rounded-lg border border-dark-600">
                       <p className={`text-xl font-bold ${x.c}`}>{x.v}</p>
-                      <p className="text-[10px] dark:text-gray-500 text-gray-400 uppercase tracking-wider mt-0.5 font-medium">{x.l}</p>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-0.5">{x.l}</p>
                     </div>
                   ))}
                 </div>
               </div>
 
               <div className="glass-panel rounded-2xl p-6 lg:col-span-3">
-                <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><BarChart2 size={18} className="text-purple-500" /> By Framework Category</h3>
-                <div className="space-y-4">
+                <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-purple-400" /> By Framework Category</h3>
+                <div className="space-y-3">
                   {Object.entries(comp?.by_category??{}).map(([cat,val]:any) => (
                     <div key={cat}>
-                      <div className="flex justify-between text-sm mb-1.5 font-medium">
-                        <span className="dark:text-gray-300 text-gray-600 capitalize">{cat.replace(/_/g,' ')}</span>
-                        <span className={`font-bold ${val>80?'text-emerald-500':'text-orange-500'}`}>{val}%</span>
+                      <div className="flex justify-between text-sm mb-1.5">
+                        <span className="text-gray-300 capitalize">{cat.replace(/_/g,' ')}</span>
+                        <span className={`font-bold ${val>80?'text-emerald-400':'text-orange-400'}`}>{val}%</span>
                       </div>
-                      <div className="w-full dark:bg-dark-700 bg-gray-100 rounded-full h-2 shadow-inner">
-                        <div className={`h-2 rounded-full transition-all duration-700 ${val>80?'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]':'bg-orange-500'}`} style={{width:`${val}%`}} />
+                      <div className="w-full bg-dark-700 rounded-full h-2">
+                        <div className={`h-2 rounded-full transition-all duration-700 ${val>80?'bg-emerald-500':'bg-orange-500'}`} style={{width:`${val}%`}} />
                       </div>
                     </div>
                   ))}
@@ -442,28 +613,31 @@ const ComplianceDashboard = () => {
           </>
         )}
 
-        <div className="glass-panel rounded-2xl overflow-hidden mt-6">
-          <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex justify-between items-center">
-            <h3 className="font-semibold flex items-center gap-2 dark:text-white text-gray-900"><AlertTriangle size={18} className="text-yellow-500" /> Recent Violations</h3>
-            <span className="text-[10px] font-bold dark:text-gray-500 text-gray-400 uppercase tracking-widest">{violations?.length ?? 0} records</span>
+        <div className="glass-panel rounded-2xl overflow-hidden">
+          <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
+            <h3 className="font-semibold flex items-center gap-2"><AlertTriangle size={18} className="text-yellow-400" /> Recent Violations</h3>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-500">{violations?.length ?? 0} records</span>
+            </div>
           </div>
           {vlLoad ? <Spinner /> : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="text-[10px] font-bold uppercase tracking-wider dark:text-gray-400 text-gray-500 dark:bg-dark-800/60 bg-gray-50">
-                  <tr>{['Rule','Severity','Resource Type','Region','Status','Date'].map(h=><th key={h} className="px-5 py-3">{h}</th>)}</tr>
+                <thead className="text-xs text-gray-400 bg-dark-800/60">
+                  <tr>{['Rule','Severity','Resource Type','Region','Status','Date'].map(h=><th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr>
                 </thead>
-                <tbody className="divide-y dark:divide-dark-700/50 divide-gray-100">
+                <tbody className="divide-y divide-dark-700/50">
                   {(violations??[]).map((v:any,i:number)=>(
-                    <tr key={i} className="dark:hover:bg-dark-800/50 hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3 text-sm font-medium dark:text-gray-200 text-gray-800">{v.rule_name}</td>
+                    <tr key={i} className="hover:bg-dark-800/50 transition-colors">
+                      <td className="px-5 py-3 text-sm text-gray-200">{v.rule_name}</td>
                       <td className="px-5 py-3"><SeverityBadge severity={v.severity} /></td>
-                      <td className="px-5 py-3 text-xs dark:text-gray-400 text-gray-500 font-medium">{v.resource_type??'—'}</td>
-                      <td className="px-5 py-3 text-xs dark:text-gray-400 text-gray-500">{v.region??'—'}</td>
-                      <td className="px-5 py-3"><span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border shadow-sm ${v.status==='open'?'bg-red-500/10 text-red-500 border-red-500/30':'dark:bg-gray-500/10 bg-gray-100 dark:text-gray-400 text-gray-500 border-gray-500/30'}`}>{v.status}</span></td>
+                      <td className="px-5 py-3 text-xs text-gray-400">{v.resource_type??'—'}</td>
+                      <td className="px-5 py-3 text-xs text-gray-400">{v.region??'—'}</td>
+                      <td className="px-5 py-3"><span className={`text-xs px-2 py-0.5 rounded border ${v.status==='open'?'bg-red-500/10 text-red-400 border-red-500/30':'bg-gray-500/10 text-gray-400 border-gray-500/30'}`}>{v.status}</span></td>
                       <td className="px-5 py-3 text-xs text-gray-500">{new Date(v.created_at).toLocaleDateString()}</td>
                     </tr>
                   ))}
+                  {!violations?.length && <tr><td colSpan={6} className="py-12 text-center text-gray-500">No violations found</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -474,19 +648,20 @@ const ComplianceDashboard = () => {
   );
 };
 
+// ─── IT ADMIN DASHBOARD ───────────────────────────────────────────────────────
 const ITAdminDashboard = () => {
-  const { theme } = useAuth();
   const { data: alerts, isLoading } = useQuery({ queryKey: ['alerts-all'], queryFn: () => fetchAlerts(100) });
-  const { data: summary } = useQuery({ queryKey: ['alerts-summary'], queryFn: fetchAlertSummary });
-  const { data: recent } = useQuery({ queryKey: ['alerts-recent'], queryFn: fetchRecentAlerts });
 
   const nav: NavItem[] = [
     { path: '/dashboard/infra', icon: <Monitor size={17} />, label: 'Infrastructure Monitor' },
     { path: '/dashboard/infra', icon: <Bell size={17} />,    label: 'Alert Center' },
   ];
 
-  const counts = summary || { critical: 0, high: 0, medium: 0, low: 0 };
-  const total = counts.total || 0;
+  const headerActions = <ThemeToggle />;
+
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  (alerts ?? []).forEach((a: any) => { counts[a.severity as keyof typeof counts] = (counts[a.severity as keyof typeof counts] ?? 0) + 1; });
+  const total = (alerts ?? []).length;
   const acknowledged = (alerts ?? []).filter((a: any) => a.status === 'acknowledged').length;
 
   const barData = {
@@ -497,11 +672,11 @@ const ITAdminDashboard = () => {
   };
 
   return (
-    <Layout nav={nav.slice(0,1)}>
+    <Layout nav={nav.slice(0,1)} headerActions={headerActions}>
       <div className="space-y-6 animate-in fade-in duration-500">
         <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3 mb-1 dark:text-white text-gray-900"><Server className="text-cyan-500" /> Infrastructure Monitor</h1>
-          <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Resource health · Alert monitoring · Live event stream</p>
+          <h1 className="text-3xl font-bold flex items-center gap-3 mb-1"><Server className="text-cyan-400" /> Infrastructure Monitor</h1>
+          <p className="text-gray-400 text-sm">Resource health · Alert monitoring · Live event stream</p>
         </div>
 
         {isLoading ? <Spinner /> : (
@@ -515,21 +690,10 @@ const ITAdminDashboard = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6" style={{height:'380px'}}>
           <div className="glass-panel rounded-2xl p-6 lg:col-span-2 flex flex-col">
-            <h3 className="font-semibold mb-4 flex items-center gap-2 dark:text-white text-gray-900"><BarChart2 size={18} className="text-cyan-500" /> Alert Severity Breakdown</h3>
+            <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-cyan-400" /> Alert Severity Breakdown</h3>
             {isLoading ? <Spinner /> : (
               <div className="flex-1">
-                <Bar 
-                  data={barData} 
-                  options={{ 
-                    responsive:true, 
-                    maintainAspectRatio:false, 
-                    plugins:{legend:{display:false}}, 
-                    scales:{ 
-                      y:{ grid:{color:theme === 'dark' ? '#1f2937' : '#e5e7eb'}, ticks:{color:theme === 'dark' ? '#9ca3af' : '#6b7280', font:{size:10}} }, 
-                      x:{ grid:{display:false}, ticks:{color:theme === 'dark' ? '#9ca3af' : '#6b7280', font:{size:10}} } 
-                    } 
-                  }} 
-                />
+                <Bar data={barData} options={{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{grid:{color:'#1f2937'},ticks:{color:'#9ca3af'}}, x:{grid:{display:false},ticks:{color:'#9ca3af'}} } }} />
               </div>
             )}
           </div>
@@ -538,27 +702,30 @@ const ITAdminDashboard = () => {
           </div>
         </div>
 
-        <div className="glass-panel rounded-2xl overflow-hidden mt-6">
-          <div className="p-4 border-b dark:border-dark-700 border-gray-100 dark:bg-dark-800 bg-gray-50 flex justify-between items-center">
-            <h3 className="font-semibold flex items-center gap-2 dark:text-white text-gray-900"><Activity size={18} className="text-cyan-500" /> Recent Alerts</h3>
-            <button className="text-[10px] font-bold uppercase tracking-wider dark:bg-dark-600 bg-white hover:dark:bg-dark-500 hover:bg-gray-50 dark:border-dark-500 border-gray-200 dark:text-gray-300 text-gray-600 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 shadow-sm border"><CheckCircle size={13}/> Acknowledge All</button>
+        <div className="glass-panel rounded-2xl overflow-hidden">
+          <div className="p-4 border-b border-dark-700 bg-dark-800 flex justify-between items-center">
+            <h3 className="font-semibold flex items-center gap-2"><Activity size={18} className="text-cyan-400" /> Recent Alerts</h3>
+            <div className="flex items-center gap-2">
+              <button className="text-xs bg-dark-600 hover:bg-dark-500 border border-dark-500 text-gray-300 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"><CheckCircle size={13}/> Acknowledge All</button>
+            </div>
           </div>
           {isLoading ? <Spinner /> : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="text-[10px] font-bold uppercase tracking-wider dark:text-gray-400 text-gray-500 dark:bg-dark-800/60 bg-gray-50">
-                  <tr>{['Severity','Type','Message','Time','Status'].map(h=><th key={h} className="px-5 py-3">{h}</th>)}</tr>
+                <thead className="text-xs text-gray-400 bg-dark-800/60">
+                  <tr>{['Severity','Type','Message','Time','Status'].map(h=><th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr>
                 </thead>
-                <tbody className="divide-y dark:divide-dark-700/50 divide-gray-100">
-                  {(recent??[]).slice(0,15).map((a:any,i:number)=>(
-                    <tr key={i} className="dark:hover:bg-dark-800/50 hover:bg-gray-50 transition-colors">
+                <tbody className="divide-y divide-dark-700/50">
+                  {(alerts??[]).slice(0,15).map((a:any,i:number)=>(
+                    <tr key={i} className="hover:bg-dark-800/50 transition-colors">
                       <td className="px-5 py-3"><SeverityBadge severity={a.severity}/></td>
-                      <td className="px-5 py-3 text-[10px] font-bold text-brand uppercase tracking-widest">{a.type}</td>
-                      <td className="px-5 py-3 text-sm font-medium dark:text-gray-200 text-gray-800 max-w-md truncate">{a.message}</td>
-                      <td className="px-5 py-3 text-xs dark:text-gray-500 text-gray-400">{new Date(a.timestamp || a.created_at).toLocaleString()}</td>
-                      <td className="px-5 py-3"><span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border shadow-sm ${a.status==='active'?'bg-red-500/10 text-red-500 border-red-500/30':'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'}`}>{a.status}</span></td>
+                      <td className="px-5 py-3 text-xs text-brand uppercase tracking-wide">{a.type}</td>
+                      <td className="px-5 py-3 text-sm text-gray-200 max-w-md truncate">{a.message}</td>
+                      <td className="px-5 py-3 text-xs text-gray-500">{new Date(a.created_at).toLocaleString()}</td>
+                      <td className="px-5 py-3"><span className={`text-xs px-2 py-0.5 rounded border ${a.status==='active'?'bg-red-500/10 text-red-400 border-red-500/30':'bg-green-500/10 text-green-400 border-green-500/30'}`}>{a.status}</span></td>
                     </tr>
                   ))}
+                  {!alerts?.length && <tr><td colSpan={5} className="py-12 text-center text-gray-500">No alerts</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -570,6 +737,7 @@ const ITAdminDashboard = () => {
 };
 
 // ─── CLOUD ADMIN DASHBOARD ────────────────────────────────────────────────────
+<<<<<<< HEAD
 // Resource type badges
 const RESOURCE_ICONS: Record<string, React.ReactNode> = {
   ec2:    <Server size={12} className="text-cyan-400" />,
@@ -1034,6 +1202,8 @@ const ExportCenter = () => {
   );
 };
 
+=======
+>>>>>>> f79aacfd0bc790d68202603431c151319038c798
 
 
 // ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
@@ -1069,48 +1239,48 @@ const LoginScreen = ({ onLogin }: { onLogin: (token: string, role: string, email
   };
 
   return (
-    <div className="h-screen w-full flex items-center justify-center dark:bg-dark-900 bg-gray-50 relative overflow-hidden transition-all">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] dark:from-brand/5 from-brand/10 dark:via-dark-900 via-transparent to-transparent" />
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 dark:bg-brand/5 bg-brand/10 rounded-full blur-3xl" />
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 dark:bg-purple-500/5 bg-purple-500/10 rounded-full blur-3xl" />
+    <div className="h-screen w-full flex items-center justify-center bg-dark-900 relative overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-brand/5 via-dark-900 to-dark-900" />
+      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand/5 rounded-full blur-3xl" />
+      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
 
       <div className="relative z-10 w-full max-w-md px-4">
         <div className="text-center mb-8">
-          <div className="inline-flex p-3 bg-brand/10 border border-brand/20 rounded-2xl mb-4 shadow-xl backdrop-blur-sm">
+          <div className="inline-flex p-3 bg-brand/20 border border-brand/30 rounded-2xl mb-4">
             <Cloud size={32} className="text-brand" />
           </div>
-          <h1 className="text-3xl font-bold dark:text-white text-gray-900 mb-1">CloudGuard</h1>
-          <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Governance & FinOps Platform</p>
+          <h1 className="text-3xl font-bold text-white mb-1">CloudGuard</h1>
+          <p className="text-gray-400 text-sm">Cloud Governance Platform</p>
         </div>
 
-        <div className="glass-panel rounded-2xl p-8 border dark:border-dark-700 border-gray-200/50 shadow-2xl">
-          <h2 className="text-lg font-bold dark:text-white text-gray-800 mb-6">Sign in to your account</h2>
-          {error && <div className="bg-red-500/10 border border-red-500/30 text-red-500 dark:text-red-400 px-4 py-3 rounded-xl mb-4 text-sm font-medium">{error}</div>}
+        <div className="glass-panel rounded-2xl p-8 border border-dark-700 shadow-2xl">
+          <h2 className="text-lg font-semibold text-white mb-6">Sign in to your account</h2>
+          {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl mb-4 text-sm">{error}</div>}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-[10px] dark:text-gray-400 text-gray-500 font-bold mb-1.5 uppercase tracking-widest">Email Address</label>
+              <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Email</label>
               <input type="email" value={email} onChange={e=>setEmail(e.target.value)}
-                className="w-full dark:bg-dark-800 bg-white border dark:border-dark-600 border-gray-200 rounded-xl px-4 py-3 dark:text-white text-gray-900 text-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/10 transition-all shadow-sm" />
+                className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20 transition-all" />
             </div>
             <div>
-              <label className="block text-[10px] dark:text-gray-400 text-gray-500 font-bold mb-1.5 uppercase tracking-widest">Password</label>
+              <label className="block text-xs text-gray-400 font-medium mb-1.5 uppercase tracking-wider">Password</label>
               <input type="password" value={password} onChange={e=>setPassword(e.target.value)}
-                className="w-full dark:bg-dark-800 bg-white border dark:border-dark-600 border-gray-200 rounded-xl px-4 py-3 dark:text-white text-gray-900 text-sm outline-none focus:border-brand focus:ring-4 focus:ring-brand/10 transition-all shadow-sm" />
+                className="w-full bg-dark-800 border border-dark-600 rounded-xl px-4 py-2.5 text-white text-sm outline-none focus:border-brand/50 focus:ring-1 focus:ring-brand/20 transition-all" />
             </div>
             <button type="submit" disabled={loading}
-              className="w-full bg-brand hover:bg-blue-600 text-white font-bold py-3 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-2 shadow-lg shadow-brand/20">
-              {loading ? <><div className="animate-spin rounded-full h-4 w-4 border-t-2 border-white/50 border-r-2" /> Authenticating…</> : 'Sign In to CloudGuard'}
+              className="w-full bg-brand hover:bg-blue-500 text-white font-semibold py-2.5 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-2">
+              {loading ? <><div className="animate-spin rounded-full h-4 w-4 border-t-2 border-white/50 border-r-2" /> Signing in…</> : 'Sign In'}
             </button>
           </form>
 
-          <div className="mt-8 pt-6 border-t dark:border-dark-700 border-gray-100">
-            <p className="text-[10px] dark:text-gray-500 text-gray-400 mb-4 font-bold uppercase tracking-widest">Quick Developer Access</p>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="mt-6 pt-5 border-t border-dark-700">
+            <p className="text-xs text-gray-500 mb-3 font-medium uppercase tracking-wider">Quick login (pwd: admin123)</p>
+            <div className="grid grid-cols-2 gap-2">
               {roles.map(r=>(
                 <button key={r.email} onClick={()=>setEmail(r.email)}
-                  className="text-[11px] font-medium dark:bg-dark-700 bg-gray-50 hover:dark:bg-dark-600 hover:bg-gray-100 border dark:border-dark-600 border-gray-200 dark:text-gray-300 text-gray-700 px-3 py-2.5 rounded-xl transition-all text-left shadow-sm">
-                  <span className="block font-bold mb-0.5">{r.label}</span>
-                  <span className="dark:text-gray-500 text-gray-400 truncate block text-[10px]">{r.email}</span>
+                  className="text-xs bg-dark-700 hover:bg-dark-600 border border-dark-600 text-gray-300 px-3 py-2 rounded-lg transition-colors text-left">
+                  <span className="block font-medium">{r.label}</span>
+                  <span className="text-gray-500 truncate block">{r.email}</span>
                 </button>
               ))}
             </div>
@@ -1152,19 +1322,14 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [authed, setAuthed] = useState(false);
   const [role, setRole]     = useState('');
   const [email, setEmail]   = useState('');
-  const [theme, setTheme]   = useState<'light' | 'dark'>('dark');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem('cloudguard_token');
     const r     = localStorage.getItem('cloudguard_role') ?? '';
     const e     = localStorage.getItem('cloudguard_email') ?? '';
-    const t     = localStorage.getItem('cloudguard_theme') as 'light' | 'dark' ?? 'dark';
     
-    setTheme(t);
-    if (t === 'dark') document.documentElement.classList.add('dark');
-    else document.documentElement.classList.remove('dark');
-
+    // Only auto-auth if we have BOTH a token and a non-empty role
     if (token && r) {
       setAuthToken(token);
       setRole(r);
@@ -1174,18 +1339,7 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // Inconsistent state, clear storage
       ['cloudguard_token','cloudguard_role','cloudguard_email'].forEach(k=>localStorage.removeItem(k));
     }
-
-    // INTERCEPTOR: Handle 401 Unauthorized globally
-    const interceptor = axios.interceptors.response.use(
-      res => res,
-      err => {
-        if (err.response?.status === 401) logout();
-        return Promise.reject(err);
-      }
-    );
-
     setLoading(false);
-    return () => axios.interceptors.response.eject(interceptor);
   }, []);
 
   const login = (token: string, userRole: string, userEmail: string) => {
@@ -1205,22 +1359,14 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     queryClient.clear();
   };
 
-  const toggleTheme = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    localStorage.setItem('cloudguard_theme', next);
-    if (next === 'dark') document.documentElement.classList.add('dark');
-    else document.documentElement.classList.remove('dark');
-  };
-
   if (loading) return (
-    <div className="h-screen flex items-center justify-center dark:bg-dark-900 bg-gray-50">
+    <div className="h-screen flex items-center justify-center bg-dark-900">
       <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-brand" />
     </div>
   );
 
   return (
-    <AuthContext.Provider value={{ authed, role, email, login, logout, theme, toggleTheme }}>
+    <AuthContext.Provider value={{ authed, role, email, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -1246,7 +1392,11 @@ function AppRoutes() {
       <Route path="/dashboard/finops"   element={<ProtectedRoute allowed={FINOPS}><FinOpsDashboard /></ProtectedRoute>} />
       <Route path="/dashboard/compliance" element={<ProtectedRoute allowed={COMP}><ComplianceDashboard /></ProtectedRoute>} />
       <Route path="/dashboard/infra"    element={<ProtectedRoute allowed={IT}><ITAdminDashboard /></ProtectedRoute>} />
-      <Route path="/dashboard/admin"    element={<ProtectedRoute allowed={ADMIN}><CloudAdminDashboard /></ProtectedRoute>} />
+      <Route path="/admin-overview"     element={<ProtectedRoute allowed={ADMIN}><AdminLayout><AdminOverview /></AdminLayout></ProtectedRoute>} />
+      <Route path="/user-management"    element={<ProtectedRoute allowed={ADMIN}><AdminLayout><UserManagement /></AdminLayout></ProtectedRoute>} />
+      <Route path="/department-summary" element={<ProtectedRoute allowed={ADMIN}><AdminLayout><DepartmentSummary /></AdminLayout></ProtectedRoute>} />
+      <Route path="/resource-registry"  element={<ProtectedRoute allowed={ADMIN}><AdminLayout><ResourceRegistry /></AdminLayout></ProtectedRoute>} />
+      <Route path="/audit-logs"         element={<ProtectedRoute allowed={ADMIN}><AdminLayout><AuditLogs /></AdminLayout></ProtectedRoute>} />
       <Route path="*"                   element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -1255,12 +1405,16 @@ function AppRoutes() {
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AuthProvider>
+            <ErrorBoundary>
+              <AppRoutes />
+            </ErrorBoundary>
+          </AuthProvider>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

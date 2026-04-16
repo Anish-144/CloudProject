@@ -1,56 +1,26 @@
-# Environment variables — never commit secrets
-.env
-.env.*
-*.env
-!.env.example
+# Node modules
+**/node_modules/
+**/dist/
+**/dist-ssr/
+*.local
 
-# Python bytecode & caches
-__pycache__/
+# Python
 **/__pycache__/
 *.py[cod]
 *$py.class
-*.so
-*.pyd
-.Python
-env/
-develop-eggs/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-*.egg-info/
-.installed.cfg
-*.egg
-venv/
-.venv/
-pip-log.txt
+**/venv/
+.env
+**/.pytest_cache/
 
-# Node / Frontend
-node_modules/
-npm-debug.log*
-yarn-error.log
-yarn-debug.log*
-.pnp/
-
-# Build outputs
-dist/
-build/
-
-# Docker
-*.dockerignore
-
-# IDEs / Editors
-.idea/
+# IDEs
 .vscode/
-*.swp
-*.swo
-*~
+.idea/
 
-# OS artifacts
+# OS
 .DS_Store
 Thumbs.db
-desktop.ini
+
+# Project specific
+*.docx
+project_summary.md
+test_hash.py

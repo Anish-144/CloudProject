@@ -6,10 +6,10 @@ import operator
 from datetime import datetime
 from typing import Optional, Any
 from databases import Database
+import redis.asyncio as aioredis
 import httpx
 from fastapi import FastAPI
 import uvicorn
-import redis
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
+ALERT_SERVICE_URL = os.getenv("ALERT_SERVICE_URL", "http://alert_service:8003")
+STREAM_KEY = "cloud_logs"
+CONSUMER_GROUP = "compliance_group"
+CONSUMER_NAME = "compliance_engine_1"
 
 # ─── Rule Evaluation Engine ───────────────────────────────────
 
@@ -101,14 +105,14 @@ async def get_active_rules(db: Database) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-async def get_or_create_resource(db: Database, resource_id: str) -> str:
+async def get_or_create_resource(db: Database, resource_id: str, account_id: Optional[str] = None) -> str:
     row = await db.fetch_one("SELECT id FROM resources WHERE id = :id", {"id": resource_id})
     if not row:
         await db.execute("""
-            INSERT INTO resources (id, cloud_provider, resource_type, region)
-            VALUES (:id, 'aws', 'ec2', 'us-east-1')
+            INSERT INTO resources (id, cloud_provider, resource_type, region, aws_account_id)
+            VALUES (:id, 'aws', 'ec2', 'us-east-1', :account_id)
             ON CONFLICT (id) DO NOTHING
-        """, {"id": resource_id})
+        """, {"id": resource_id, "account_id": account_id})
     return resource_id
 
 
@@ -134,13 +138,12 @@ async def record_violation(db: Database, resource_id: str, rule: dict, log: dict
     return severity
 
 
-async def publish_alert(redis_client: redis.Redis, resource_id: str, rule: dict, severity: str, score: float, iam_user: str = None):
+async def publish_alert(client: httpx.AsyncClient, resource_id: str, rule: dict, severity: str, score: float):
     payload = {
-        "severity": severity.upper(),
-        "type": "COMPLIANCE",
+        "type": "compliance",
+        "source_id": resource_id,
+        "severity": severity,
         "message": f"[Compliance] Rule violated: '{rule['name']}' on resource {resource_id}",
-        "resource_id": resource_id,
-        "timestamp": datetime.utcnow().isoformat(),
         "details": {
             "rule_name": rule["name"],
             "rule_description": rule.get("description"),
@@ -148,25 +151,23 @@ async def publish_alert(redis_client: redis.Redis, resource_id: str, rule: dict,
             "weight": rule["weight"],
             "compliance_score": round(score, 1),
         },
-        "iam_user": iam_user,
     }
     try:
-        redis_client.publish("alerts_stream", json.dumps(payload))
+        resp = await client.post(f"{ALERT_SERVICE_URL}/internal/alerts", json=payload, timeout=5)
+        resp.raise_for_status()
     except Exception as e:
         logger.error(f"Failed to publish compliance alert: {e}")
 
 
 # ─── Core Processing ──────────────────────────────────────────
 
-async def process_log(db: Database, redis_client: redis.Redis, rules: list[dict], log: dict):
+async def process_log(db: Database, client: httpx.AsyncClient, rules: list[dict], log: dict):
     resource_id = log.get("resource_id")
     if not resource_id:
         return
 
-    await get_or_create_resource(db, resource_id)
-
-    # Extract IAM user for alert routing
-    iam_user = log.get("ingested_by") or log.get("iam_user") or log.get("user")
+    account_id = log.get("aws_account_id")
+    await get_or_create_resource(db, resource_id, account_id)
 
     violated_ids = set()
     for rule in rules:
@@ -175,7 +176,7 @@ async def process_log(db: Database, redis_client: redis.Redis, rules: list[dict]
             severity = await record_violation(db, resource_id, rule, log)
             violated_ids.add(str(rule["id"]))
             score = calculate_score(rules, violated_ids)
-            await publish_alert(redis_client, resource_id, rule, severity, score, iam_user=iam_user)
+            await publish_alert(client, resource_id, rule, severity, score)
             logger.info(f"Violation: '{rule['name']}' resource={resource_id} severity={severity}")
 
     if violated_ids:
@@ -206,56 +207,44 @@ async def main():
     asyncio.create_task(run_health_server())
 
     db = Database(DATABASE_URL)
-    
-    # Retry logic for database connection
-    max_retries = 5
-    retry_interval = 2
-    for i in range(max_retries):
-        try:
-            await db.connect()
-            logger.info("Database connected.")
-            break
-        except Exception as e:
-            if i == max_retries - 1:
-                logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
-                raise
-            logger.warning(f"Database connection attempt {i+1} failed ({e}). Retrying in {retry_interval}s...")
-            await asyncio.sleep(retry_interval)
+    await db.connect()
+    redis = aioredis.from_url(REDIS_URL, decode_responses=True)
 
-    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    try:
+        await redis.xgroup_create(STREAM_KEY, CONSUMER_GROUP, id="0", mkstream=True)
+    except Exception:
+        pass  # Group already exists
 
     # Cache rules in memory (refresh every 60s)
     rules = await get_active_rules(db)
     rules_refreshed_at = datetime.utcnow()
 
-    logger.info(f"Loaded {len(rules)} compliance rules. Polling incoming_logs in PostgreSQL...")
-    while True:
-        try:
-            # Refresh rules every 60 seconds
-            if (datetime.utcnow() - rules_refreshed_at).seconds > 60:
-                rules = await get_active_rules(db)
-                rules_refreshed_at = datetime.utcnow()
-                logger.info(f"Rules refreshed: {len(rules)} active rules")
+    async with httpx.AsyncClient() as client:
+        logger.info(f"Loaded {len(rules)} compliance rules. Listening on '{STREAM_KEY}'...")
+        while True:
+            try:
+                # Refresh rules every 60 seconds
+                if (datetime.utcnow() - rules_refreshed_at).seconds > 60:
+                    rules = await get_active_rules(db)
+                    rules_refreshed_at = datetime.utcnow()
+                    logger.info(f"Rules refreshed: {len(rules)} active rules")
 
-            rows = await db.fetch_all("SELECT id, log_data FROM incoming_logs WHERE processed_compliance = false LIMIT 100")
-            if not rows:
-                await asyncio.sleep(2)
-                continue
-
-            for row in rows:
-                try:
-                    if isinstance(row["log_data"], str):
-                        log = json.loads(row["log_data"])
-                    else:
-                        log = row["log_data"]
-                        
-                    await process_log(db, redis_client, rules, log)
-                    await db.execute("UPDATE incoming_logs SET processed_compliance = true WHERE id = :id", {"id": row["id"]})
-                except Exception as e:
-                    logger.error(f"Error processing log {row['id']}: {e}")
-        except Exception as e:
-            logger.error(f"PostgreSQL polling error: {e}")
-            await asyncio.sleep(3)
+                messages = await redis.xreadgroup(
+                    CONSUMER_GROUP, CONSUMER_NAME,
+                    {STREAM_KEY: ">"},
+                    count=10, block=2000
+                )
+                for stream, entries in messages:
+                    for entry_id, fields in entries:
+                        try:
+                            log = json.loads(fields["data"])
+                            await process_log(db, client, rules, log)
+                            await redis.xack(STREAM_KEY, CONSUMER_GROUP, entry_id)
+                        except Exception as e:
+                            logger.error(f"Error processing log {entry_id}: {e}")
+            except Exception as e:
+                logger.error(f"Stream error: {e}")
+                await asyncio.sleep(3)
 
 
 if __name__ == "__main__":

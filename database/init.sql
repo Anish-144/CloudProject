@@ -12,8 +12,23 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'viewer',
+    aws_account_id UUID, -- Foreign key managed manually or via later constraint
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ============================================
+-- AWS ACCOUNTS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS aws_accounts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    aws_account_id VARCHAR(12) UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Add foreign key constraints separately for safety
+ALTER TABLE users ADD CONSTRAINT fk_user_account FOREIGN KEY (aws_account_id) REFERENCES aws_accounts(id) ON DELETE SET NULL;
+
 
 -- ============================================
 -- ROLE MIGRATION (idempotent)
@@ -60,6 +75,7 @@ CREATE TABLE IF NOT EXISTS resources (
     resource_type VARCHAR(100) NOT NULL,
     region VARCHAR(100) NOT NULL,
     owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    aws_account_id UUID REFERENCES aws_accounts(id) ON DELETE SET NULL,
     tags JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -155,19 +171,28 @@ CREATE TABLE IF NOT EXISTS resource_metrics (
 CREATE INDEX IF NOT EXISTS idx_resource_metrics_updated ON resource_metrics(last_updated);
 
 -- ============================================
+-- SEED: AWS ACCOUNTS
+-- ============================================
+INSERT INTO aws_accounts (id, name, aws_account_id) VALUES
+    ('a0000000-0000-0000-0000-000000000001', 'Alpha Cluster', '123456789012'),
+    ('b0000000-0000-0000-0000-000000000002', 'Beta Production', '987654321098')
+ON CONFLICT (aws_account_id) DO NOTHING;
+
+-- ============================================
 -- SEED: ALL ROLE USERS
 -- Password for all: admin123 (bcrypt hashed)
 -- ============================================
-INSERT INTO users (email, password_hash, role) VALUES
-    ('admin@test.com',           '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin'),
-    ('admin@cloudguard.io',      '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'cloud_admin'),
-    ('finops@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'finops_manager'),
-    ('compliance@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'compliance_manager'),
-    ('itadmin@cloudguard.io',    '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'it_admin'),
-    ('viewer@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'viewer')
+INSERT INTO users (email, password_hash, role, aws_account_id) VALUES
+    ('admin@test.com',           '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'admin', 'a0000000-0000-0000-0000-000000000001'),
+    ('admin@cloudguard.io',      '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'cloud_admin', 'a0000000-0000-0000-0000-000000000001'),
+    ('finops@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'finops_manager', 'a0000000-0000-0000-0000-000000000001'),
+    ('compliance@cloudguard.io', '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'compliance_manager', 'b0000000-0000-0000-0000-000000000002'),
+    ('itadmin@cloudguard.io',    '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'it_admin', 'b0000000-0000-0000-0000-000000000002'),
+    ('viewer@cloudguard.io',     '$2b$12$lwxXKkvHh5xlSR.TfLRlU.RS4rdg2wfYdjZ44V48pLrMs5gTz5lZW', 'viewer', 'b0000000-0000-0000-0000-000000000002')
 ON CONFLICT (email) DO UPDATE SET
     role = EXCLUDED.role,
-    password_hash = EXCLUDED.password_hash;
+    password_hash = EXCLUDED.password_hash,
+    aws_account_id = EXCLUDED.aws_account_id;
 
 -- ============================================
 -- SEED: DEFAULT COMPLIANCE RULES
@@ -230,6 +255,7 @@ INSERT INTO compliance_rules (name, description, weight, condition_json, categor
         'performance'
     )
 ON CONFLICT DO NOTHING;
+<<<<<<< HEAD
 
 -- ============================================
 -- AWS RESOURCES TABLE (Boto3 Integration)
@@ -468,3 +494,5 @@ BEGIN
     END;
 END $$;
 
+=======
+>>>>>>> f79aacfd0bc790d68202603431c151319038c798
