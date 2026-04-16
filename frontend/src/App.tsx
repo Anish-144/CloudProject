@@ -3,7 +3,8 @@ import { BrowserRouter, Routes, Route, Link, useLocation, Navigate } from 'react
 import {
   ShieldCheck, TrendingDown, Bell, Cloud, Activity, AlertTriangle,
   CheckCircle, DollarSign, Server, Users, Crown, BarChart2, Lock,
-  LogOut, PiggyBank, Cpu, Monitor, Settings, Database, Sun, Moon
+  LogOut, PiggyBank, Cpu, Monitor, Settings, Database, Sun, Moon,
+  Download, AlertCircle, BarChart, Calendar
 } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
@@ -731,7 +732,7 @@ const ResourcesTab = () => {
 
 const CloudAdminDashboard = () => {
   const { theme } = useAuth();
-  const [tab, setTab] = useState<'overview'|'resources'|'users'>('overview');
+  const [tab, setTab] = useState<'overview'|'resources'|'users'|'export'>('overview');
   const { data: fp,         isLoading: fpLoad } = useQuery({ queryKey: ['finops'],      queryFn: fetchFinOps });
   const { data: comp,       isLoading: cpLoad } = useQuery({ queryKey: ['compliance'],  queryFn: fetchCompliance });
   const { data: trends,     isLoading: tdLoad } = useQuery({ queryKey: ['trends'],      queryFn: fetchTrends });
@@ -744,6 +745,7 @@ const CloudAdminDashboard = () => {
     { path:'/dashboard/finops',     icon:<TrendingDown size={17}/>, label:'FinOps'         },
     { path:'/dashboard/compliance', icon:<ShieldCheck size={17}/>,  label:'Compliance'     },
     { path:'/dashboard/infra',      icon:<Monitor size={17}/>,      label:'Infrastructure' },
+    { path:'export',                icon:<Download size={17}/>,     label:'Export Center'  },
   ];
 
   const trendChart = {
@@ -769,10 +771,10 @@ const CloudAdminDashboard = () => {
             <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Full platform visibility · Resource monitoring · User management</p>
           </div>
           <div className="flex dark:bg-dark-800 bg-gray-50 border dark:border-dark-600 border-gray-200 rounded-xl p-1 gap-1 shadow-sm">
-            {(['overview','resources','users'] as const).map(t=>(
+            {(['overview','resources','users','export'] as const).map(t=>(
               <button key={t} id={`admin-tab-${t}`} onClick={()=>setTab(t)}
                 className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${tab===t?'bg-brand text-white shadow-sm':'dark:text-gray-400 text-gray-500 hover:dark:text-gray-200 hover:text-gray-900'}`}>
-                {t==='overview' ? 'Overview' : t==='resources' ? '🔍 Resources' : 'Users'}
+                {t==='overview' ? 'Overview' : t==='resources' ? '🔍 Resources' : t==='users' ? 'Users' : 'Export'}
               </button>
             ))}
           </div>
@@ -915,8 +917,120 @@ const CloudAdminDashboard = () => {
             )}
           </div>
         )}
+
+        {/* ── EXPORT ── */}
+        {tab === 'export' && <ExportCenter />}
       </div>
     </Layout>
+  );
+};
+
+const ExportCenter = () => {
+  const [start, setStart] = useState(new Date(Date.now() - 86400000).toISOString().split('T')[0]);
+  const [end, setEnd] = useState(new Date().toISOString().split('T')[0]);
+  const [loading, setLoading] = useState<string | null>(null);
+
+  const handleDownload = async (type: 'alerts' | 'usage') => {
+    setLoading(type);
+    try {
+      const token = localStorage.getItem('cloudguard_token');
+      const resp = await fetch(`${API_BASE}/admin/export/${type}?start_date=${start}&end_date=${end}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(`Download failed (${resp.status}): ${errorData.detail}`);
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${type}_export_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'Failed to download logs');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold dark:text-white text-gray-900 flex items-center gap-3">
+            <Download className="text-brand" /> Data Export Center
+          </h2>
+          <p className="dark:text-gray-400 text-gray-500 text-sm font-medium">Filter and download system logs for auditing and analysis.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="glass-panel p-6 rounded-2xl md:col-span-1 space-y-4">
+          <h3 className="font-semibold dark:text-gray-200 text-gray-800 flex items-center gap-2">
+            <Calendar size={18} className="text-brand" /> Date Filtering
+          </h3>
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] font-bold uppercase text-gray-500 mb-1 block">Start Date</label>
+              <input type="date" value={start} onChange={e => setStart(e.target.value)}
+                className="w-full dark:bg-dark-900 bg-white border dark:border-dark-700 border-gray-200 rounded-xl px-4 py-2 text-sm dark:text-white outline-none focus:border-brand transition-all" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase text-gray-500 mb-1 block">End Date</label>
+              <input type="date" value={end} onChange={e => setEnd(e.target.value)}
+                className="w-full dark:bg-dark-900 bg-white border dark:border-dark-700 border-gray-200 rounded-xl px-4 py-2 text-sm dark:text-white outline-none focus:border-brand transition-all" />
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-500 italic">Select a range to filter logs. Default is the last 24 hours.</p>
+        </div>
+
+        <div className="md:col-span-2 space-y-4">
+          <div className="glass-panel p-6 rounded-2xl flex items-center justify-between group hover:border-brand/30 transition-all border border-transparent">
+            <div className="flex items-center gap-4">
+              <div className="h-12 w-12 rounded-xl bg-red-500/10 flex items-center justify-center text-red-500 font-bold text-xl">
+                <AlertCircle size={24} />
+              </div>
+              <div>
+                <h4 className="font-bold dark:text-white text-gray-900">System Alerts Log</h4>
+                <p className="text-xs dark:text-gray-400 text-gray-500">Includes security findings, idle resource warnings, and system status changes.</p>
+              </div>
+            </div>
+            <button
+              onClick={() => handleDownload('alerts')}
+              disabled={!!loading}
+              className="px-6 py-2.5 bg-brand hover:opacity-90 text-white rounded-xl font-bold text-sm shadow-lg shadow-brand/20 transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {loading === 'alerts' ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" /> : <Download size={16} />}
+              Export CSV
+            </button>
+          </div>
+
+          <div className="glass-panel p-6 rounded-2xl flex items-center justify-between group hover:border-cyan-500/30 transition-all border border-transparent">
+            <div className="flex items-center gap-4">
+              <div className="h-12 w-12 rounded-xl bg-cyan-500/10 flex items-center justify-center text-cyan-500 font-bold text-xl">
+                <BarChart size={24} />
+              </div>
+              <div>
+                <h4 className="font-bold dark:text-white text-gray-900">Resource Usage Metrics</h4>
+                <p className="text-xs dark:text-gray-400 text-gray-500">Detailed historical data on CPU, Memory, and estimated costs for cloud resources.</p>
+              </div>
+            </div>
+            <button
+              onClick={() => handleDownload('usage')}
+              disabled={!!loading}
+              className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-cyan-500/20 transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {loading === 'usage' ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" /> : <Download size={16} />}
+              Export CSV
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 

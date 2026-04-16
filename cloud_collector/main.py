@@ -50,10 +50,10 @@ AWS_REGION         = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 DATA_SOURCE_MODE   = os.getenv("DATA_SOURCE_MODE", "hybrid")
 
 # Polling intervals (seconds)
-EC2_INTERVAL    = int(os.getenv("COLLECTOR_EC2_INTERVAL",    "300"))   # 5 min
-S3_INTERVAL     = int(os.getenv("COLLECTOR_S3_INTERVAL",     "900"))   # 15 min
-LAMBDA_INTERVAL = int(os.getenv("COLLECTOR_LAMBDA_INTERVAL", "600"))   # 10 min
-IAM_INTERVAL    = int(os.getenv("COLLECTOR_IAM_INTERVAL",    "1800"))  # 30 min
+EC2_INTERVAL    = int(os.getenv("COLLECTOR_EC2_INTERVAL",    "60"))   # 1 min
+S3_INTERVAL     = int(os.getenv("COLLECTOR_S3_INTERVAL",     "60"))   # 1 min
+LAMBDA_INTERVAL = int(os.getenv("COLLECTOR_LAMBDA_INTERVAL", "60"))   # 1 min
+IAM_INTERVAL    = int(os.getenv("COLLECTOR_IAM_INTERVAL",    "60"))   # 1 min
 
 USE_STS = False
 
@@ -175,13 +175,15 @@ async def upsert_cloud_resource(db: Database, entry: dict):
     if not iam_user:
         iam_user = "unknown"
 
+    account_name = entry.get("account_name") or "Unknown"
+
     await db.execute("""
         INSERT INTO cloud_resources
             (resource_id, type, name, state, region, cpu, size_mb,
-             last_activity, estimated_cost, idle, recommendation, iam_user, ownership_source, last_updated, last_seen)
+             last_activity, estimated_cost, idle, recommendation, iam_user, ownership_source, last_updated, last_seen, account_name)
         VALUES
             (:resource_id, :type, :name, :state, :region, :cpu, :size_mb,
-             :last_activity, :estimated_cost, :idle, :recommendation, :iam_user, :ownership_source, NOW(), NOW())
+             :last_activity, :estimated_cost, :idle, :recommendation, :iam_user, :ownership_source, NOW(), NOW(), :acct_name)
         ON CONFLICT (resource_id) DO UPDATE SET
             type           = EXCLUDED.type,
             name           = EXCLUDED.name,
@@ -196,7 +198,8 @@ async def upsert_cloud_resource(db: Database, entry: dict):
             iam_user       = EXCLUDED.iam_user,
             ownership_source = EXCLUDED.ownership_source,
             last_updated   = NOW(),
-            last_seen      = NOW()
+            last_seen      = NOW(),
+            account_name   = EXCLUDED.account_name
     """, {
         "resource_id":    entry["resource_id"],
         "type":           entry["type"],
@@ -211,6 +214,7 @@ async def upsert_cloud_resource(db: Database, entry: dict):
         "recommendation": entry.get("recommendation"),
         "iam_user":       iam_user,
         "ownership_source": entry.get("ownership_source", "credentials"),
+        "acct_name":      account_name,
     })
 
 
@@ -459,6 +463,7 @@ async def collect_ec2_and_cloudwatch(
             "recommendation": recommendation,
             "iam_user":       iam_user,
             "ownership_source": ownership_source,
+            "account_name":   account_name,
         })
 
         if idle and redis_client:
@@ -566,6 +571,7 @@ async def collect_s3(
             "recommendation": recommendation,
             "iam_user":       iam_user,
             "ownership_source": ownership_source,
+            "account_name":   account_name
         })
 
         if idle and redis_client:
@@ -684,6 +690,7 @@ async def collect_lambda(
             "recommendation": recommendation,
             "iam_user":       iam_user,
             "ownership_source": ownership_source,
+            "account_name":   account_name
         })
 
         if idle and redis_client:
@@ -723,6 +730,18 @@ async def collect_iam(
     for user in users:
         user_id       = user["aws_resource_id"]
         resource_uuid = await upsert_aws_resource(db, user, account_db_id)
+
+        # Unified inventory integration: Store IAM user as a resource
+        await upsert_cloud_resource(db, {
+            "resource_id":    user_id,
+            "type":           "iam",
+            "name":           user.get("metadata", {}).get("username"),
+            "state":          "active",
+            "region":         "global",
+            "iam_user":       user.get("metadata", {}).get("username"),
+            "account_name":   account_name,
+            "last_activity":  user.get("metadata", {}).get("create_date"),
+        })
 
         log_entry = {
             "resource_id":    resource_uuid,
@@ -785,32 +804,43 @@ async def collect_single_account(
     collector_type: str = "all"
 ):
     logger.info("Running single account collection...")
-    session      = boto3.Session(region_name=AWS_REGION)
-    account_name = "PrimaryAccount"
+    
+    # Support multiple regions from env var (comma-separated). Default to AWS_REGION if not set.
+    env_regions = os.getenv("AWS_REGIONS")
+    regions_to_scan = [r.strip() for r in env_regions.split(",")] if env_regions else [AWS_REGION]
+    
+    account_name = os.getenv("AWS_ACCOUNT_NAME", "Primary Account")
 
-    import asyncio
-    cloudtrail_mapping = await asyncio.to_thread(get_cloudtrail_mapping, session, AWS_REGION)
-
-    if collector_type in ("all", "ec2"):
+    for region in regions_to_scan:
+        logger.info(f"Targeting region: {region}")
+        session = boto3.Session(region_name=region)
         try:
-            await collect_ec2_and_cloudwatch(db, redis_client, http_client, cloudtrail_mapping, session, AWS_REGION, account_name)
-        except Exception as e:
-            logger.error(f"EC2 failed: {e}")
+            cloudtrail_mapping = await asyncio.to_thread(get_cloudtrail_mapping, session, region)
+        except Exception:
+            cloudtrail_mapping = {}
 
-    if collector_type in ("all", "s3"):
-        try:
-            await collect_s3(db, redis_client, http_client, cloudtrail_mapping, session, AWS_REGION, account_name)
-        except Exception as e:
-            logger.error(f"S3 failed: {e}")
+        if collector_type in ("all", "ec2"):
+            try:
+                await collect_ec2_and_cloudwatch(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name)
+            except Exception as e:
+                logger.error(f"EC2 failed in {region}: {e}")
 
-    if collector_type in ("all", "lambda"):
-        try:
-            await collect_lambda(db, redis_client, http_client, cloudtrail_mapping, session, AWS_REGION, account_name)
-        except Exception as e:
-            logger.error(f"Lambda failed: {e}")
+        if collector_type in ("all", "s3"):
+            try:
+                await collect_s3(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name)
+            except Exception as e:
+                logger.error(f"S3 failed in {region}: {e}")
+
+        if collector_type in ("all", "lambda"):
+            try:
+                await collect_lambda(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name)
+            except Exception as e:
+                logger.error(f"Lambda failed in {region}: {e}")
 
     if collector_type in ("all", "iam"):
         try:
+            # IAM is global, only run once
+            session = boto3.Session(region_name=AWS_REGION)
             await collect_iam(db, redis_client, http_client, session, account_name)
         except Exception as e:
             logger.error(f"IAM failed: {e}")

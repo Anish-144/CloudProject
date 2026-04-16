@@ -343,7 +343,7 @@ CREATE INDEX IF NOT EXISTS idx_aws_resources_account ON aws_resources(account_id
 -- Role ARN must be updated after creating the IAM role
 -- ============================================
 INSERT INTO aws_accounts (account_name, account_id, role_arn, regions) VALUES
-    ('Primary Account', '310997740799', 'arn:aws:iam::310997740799:role/CloudGuardReadOnlyRole', '{ap-south-1}')
+    ('Primary Account', '310997740799', 'arn:aws:iam::310997740799:role/CloudGuardReadOnlyRole', '{ap-south-1, eu-north-1}')
 ON CONFLICT DO NOTHING;
 
 -- ============================================
@@ -434,7 +434,7 @@ CREATE INDEX IF NOT EXISTS idx_alerts_iam_user ON alerts(iam_user);
 -- ============================================
 CREATE TABLE IF NOT EXISTS cloud_resources (
     resource_id      VARCHAR(255) PRIMARY KEY,
-    type             VARCHAR(20)  NOT NULL CHECK (type IN ('ec2', 's3', 'lambda')),
+    type             VARCHAR(20)  NOT NULL CHECK (type IN ('ec2', 's3', 'lambda', 'iam')),
     name             VARCHAR(255),
     state            VARCHAR(50)  NOT NULL DEFAULT 'unknown',
     region           VARCHAR(50),
@@ -447,11 +447,24 @@ CREATE TABLE IF NOT EXISTS cloud_resources (
     iam_user         VARCHAR(100),
     ownership_source VARCHAR(50)  DEFAULT 'credentials',
     last_seen        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    last_updated     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    last_updated     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    account_name     VARCHAR(255)
 );
 
 CREATE INDEX IF NOT EXISTS idx_cloud_resources_type     ON cloud_resources(type);
 CREATE INDEX IF NOT EXISTS idx_cloud_resources_idle     ON cloud_resources(idle);
 CREATE INDEX IF NOT EXISTS idx_cloud_resources_iam_user ON cloud_resources(iam_user);
 CREATE INDEX IF NOT EXISTS idx_cloud_resources_updated  ON cloud_resources(last_updated);
+CREATE INDEX IF NOT EXISTS idx_cloud_resources_account  ON cloud_resources(account_name);
+
+-- ============================================
+-- MIGRATIONS: cloud_resources
+-- ============================================
+DO $$
+BEGIN
+    BEGIN
+        ALTER TABLE cloud_resources ADD COLUMN account_name VARCHAR(255);
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END;
+END $$;
 

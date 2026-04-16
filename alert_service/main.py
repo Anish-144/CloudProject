@@ -66,7 +66,7 @@ async def subscribe_alerts():
             if message:
                 data = json.loads(message["data"])
                 payload = AlertPayload(**data)
-                await receive_alert(payload)
+                await receive_alert(payload, from_stream=True)
             else:
                 await asyncio.sleep(0.1)
         except Exception as e:
@@ -136,8 +136,8 @@ app.add_middleware(
 
 # ─── Internal Endpoint (called by engines) ────────────────────
 @app.post("/internal/alerts")
-async def receive_alert(payload: AlertPayload):
-    """Receive alert from FinOps or Compliance engine, deduplicate, store, notify."""
+async def receive_alert(payload: AlertPayload, from_stream: bool = False):
+    """Receive alert from API or Redis stream, deduplicate, store, notify."""
     now = datetime.utcnow()
     if payload.timestamp:
         try:
@@ -176,6 +176,17 @@ async def receive_alert(payload: AlertPayload):
         "iam_user": payload.iam_user,
         "created_at": now,
     })
+
+    # PROVAGATION: If alert came from API (not stream), broadcast it to Redis for live UI updates
+    if not from_stream and redis_client:
+        try:
+            full_payload = payload.dict()
+            full_payload["alert_id"] = str(alert_id)
+            full_payload["priority"] = priority
+            await redis_client.publish("alerts_stream", json.dumps(full_payload, default=str))
+            logger.info(f"Broadcasted internal alert to stream: {payload.message[:60]}")
+        except Exception as e:
+            logger.error(f"Failed to broadcast alert: {e}")
 
     logger.info(f"Stored alert [{payload.severity}] {payload.message[:60]} priority={priority}")
     return {"status": "created", "alert_id": str(alert_id), "priority": priority}

@@ -3,6 +3,8 @@ import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
+import csv
+import io
 from databases import Database
 from auth import (
     get_current_user, verify_password, create_access_token,
@@ -178,11 +180,30 @@ async def get_all_alerts(limit: int = 50, offset: int = 0, current_user: dict = 
 async def alerts_stream(current_user: dict = Depends(require_authenticated)):
     """Server-sent events for real-time alerts."""
     import httpx
-    async with httpx.AsyncClient() as client:
-        async with client.stream("GET", "http://alert_service:8003/alerts/stream") as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                yield f"{line}\n"
+    
+    async def event_generator():
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("GET", "http://alert_service:8003/alerts/stream") as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if line:
+                            yield f"{line}\n\n"
+        except Exception as e:
+            logger.error(f"Alert stream gateway error: {e}")
+            yield f"data: {json.dumps({'error': 'Stream temporarily unavailable', 'retry': True})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "http://localhost:3000",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
 
 
 # ── FinOps Router ─────────────────────────────────────────────
@@ -520,17 +541,17 @@ async def get_user_summary(current_user: dict = Depends(require_cloud_admin)):
     from main import database
     rows = await database.fetch_all("""
         SELECT 
-            COALESCE(iam_user, 'Unknown') as iam_user,
+            COALESCE(account_name, 'Unknown Account') as display_name,
             COUNT(resource_id) as resource_count,
             COUNT(resource_id) FILTER (WHERE idle = true) as idle_resources,
             COALESCE(SUM(estimated_cost), 0) as total_cost
         FROM cloud_resources
-        GROUP BY COALESCE(iam_user, 'Unknown')
+        GROUP BY COALESCE(account_name, 'Unknown Account')
         ORDER BY total_cost DESC
     """)
     return [
         UserSummaryOut(
-            iam_user=r["iam_user"],
+            iam_user=r["display_name"],  # Using account name as the label
             resource_count=int(r["resource_count"] or 0),
             idle_resources=int(r["idle_resources"] or 0),
             total_cost=float(r["total_cost"] or 0)
@@ -620,3 +641,102 @@ async def get_admin_resources(
     rows = await database.fetch_all(query, params)
     return [dict(r) for r in rows]
 
+@admin_router.get("/export/alerts")
+async def export_alerts(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    current_user: dict = Depends(require_cloud_admin)
+):
+    """Export system alerts to CSV within a date range."""
+    from main import database
+    try:
+        query = "SELECT severity, type, status, message, created_at FROM alerts WHERE 1=1"
+        params = {}
+        if start_date:
+            query += " AND created_at >= :start"
+            params["start"] = datetime.fromisoformat(start_date)
+        if end_date:
+            query += " AND created_at <= :end"
+            # Append 23:59:59 to include the full end day
+            params["end"] = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
+        query += " ORDER BY created_at DESC"
+
+        rows = await database.fetch_all(query, params)
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Severity", "Type", "Status", "Message", "Timestamp"])
+        for r in rows:
+            writer.writerow([r["severity"], r["type"], r["status"], r["message"], str(r["created_at"])])
+        
+        output.seek(0)
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode()),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=alerts_export_{datetime.now().strftime('%Y%m%d')}.csv",
+                "Access-Control-Allow-Origin": "http://localhost:3000",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Alert export error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.get("/export/usage")
+async def export_usage(
+    start_date: str = Query(None),
+    end_date: str = Query(None),
+    current_user: dict = Depends(require_cloud_admin)
+):
+    """Export resource usage logs to CSV within a date range."""
+    from main import database
+    try:
+        # Joining with resources table which has aws_resource_id added from migrations
+        query = """
+            SELECT r.aws_resource_id, r.resource_type, u.cpu_usage, u.memory_usage, u.cost, u.timestamp 
+            FROM usage_logs u
+            JOIN resources r ON u.resource_id = r.id
+            WHERE 1=1
+        """
+        params = {}
+        if start_date:
+            query += " AND u.timestamp >= :start"
+            params["start"] = datetime.fromisoformat(start_date)
+        if end_date:
+            query += " AND u.timestamp <= :end"
+            # Append 23:59:59 to include the full end day
+            params["end"] = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
+        query += " ORDER BY u.timestamp DESC"
+
+        rows = await database.fetch_all(query, params)
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["AWS Resource ID", "Type", "CPU Usage (%)", "Memory Usage (%)", "Cost ($)", "Timestamp"])
+        for r in rows:
+            writer.writerow([
+                r["aws_resource_id"] or "N/A", 
+                r["resource_type"] or "unknown", 
+                r["cpu_usage"], 
+                r["memory_usage"], 
+                r["cost"], 
+                str(r["timestamp"])
+            ])
+        
+        output.seek(0)
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode()),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=usage_export_{datetime.now().strftime('%Y%m%d')}.csv",
+                "Access-Control-Allow-Origin": "http://localhost:3000",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Usage export error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
