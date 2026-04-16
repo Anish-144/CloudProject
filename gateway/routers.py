@@ -146,8 +146,26 @@ async def acknowledge_alert(alert_id: str, current_user: dict = Depends(require_
     return {"message": "Alert acknowledged"}
 
 
-<<<<<<< HEAD
-<<<<<<< HEAD
+@alerts_router.get("/export")
+async def export_alerts(current_user: dict = Depends(require_authenticated)):
+    from main import database
+    import io, csv
+    rows = await database.fetch_all("SELECT * FROM alerts ORDER BY created_at DESC")
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Type", "Source ID", "Severity", "Message", "Status", "Priority", "Created At"])
+    for r in rows:
+        writer.writerow([r["id"], r["type"], r["source_id"], r["severity"], r["message"], r["status"], r["priority"], r["created_at"]])
+    
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=alerts_export.csv"}
+    )
+
+
 # ── Public Alerts Router (no v1) ───────────────────────────────
 public_alerts_router = APIRouter(prefix="/api/alerts", tags=["Public Alerts"])
 
@@ -209,29 +227,7 @@ async def alerts_stream(current_user: dict = Depends(require_authenticated)):
             "Access-Control-Allow-Origin": "http://localhost:3000",
             "Access-Control-Allow-Credentials": "true",
         }
-=======
-@alerts_router.get("/export")
-async def export_alerts(current_user: dict = Depends(require_authenticated)):
-    from main import database
-    rows = await database.fetch_all("SELECT * FROM alerts ORDER BY created_at DESC")
-    
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["ID", "Type", "Source ID", "Severity", "Message", "Status", "Priority", "Created At"])
-    for r in rows:
-        writer.writerow([r["id"], r["type"], r["source_id"], r["severity"], r["message"], r["status"], r["priority"], r["created_at"]])
-    
-    output.seek(0)
-    return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=alerts_export.csv"}
->>>>>>> f79aacfd0bc790d68202603431c151319038c798
     )
-
-
-=======
->>>>>>> a8b7305 (old configuration)
 # ── FinOps Router ─────────────────────────────────────────────
 # Protected: finops_manager, cloud_admin, admin
 finops_router = APIRouter(prefix="/api/v1/finops", tags=["FinOps"])
