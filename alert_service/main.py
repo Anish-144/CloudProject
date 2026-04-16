@@ -46,10 +46,6 @@ def build_dedupe_key(alert_type: str, source_id: str, message: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> a8b7305 (old configuration)
 # ─── Role Routing Map ─────────────────────────────────────────
 ALERT_ROLE_ROUTING = {
     "finops": ["finops_manager", "it_admin", "cloud_admin"],
@@ -59,10 +55,10 @@ ALERT_ROLE_ROUTING = {
 
 
 async def subscribe_alerts():
-    """Subscribe to Redis alerts_stream and store alerts."""
+    """Subscribe to Redis alerts_ingest and store alerts, then broadcast to alerts_stream."""
     pubsub = redis_client.pubsub()
-    await pubsub.subscribe("alerts_stream")
-    logger.info("Subscribed to alerts_stream")
+    await pubsub.subscribe("alerts_ingest")
+    logger.info("Subscribed to alerts_ingest")
     
     while True:
         try:
@@ -78,11 +74,6 @@ async def subscribe_alerts():
             await asyncio.sleep(1)
 
 
-<<<<<<< HEAD
-=======
->>>>>>> f79aacfd0bc790d68202603431c151319038c798
-=======
->>>>>>> a8b7305 (old configuration)
 # ─── Models ───────────────────────────────────────────────────
 class AlertPayload(BaseModel):
     type: str
@@ -90,6 +81,9 @@ class AlertPayload(BaseModel):
     severity: str
     message: str
     details: Optional[dict] = {}
+    account_id: Optional[str] = None
+    iam_entity: Optional[str] = None
+    service: Optional[str] = None
 
 
 # ─── App Lifespan ─────────────────────────────────────────────
@@ -124,6 +118,25 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    error_msg = f"Unhandled error during {request.method} {request.url.path}: {str(exc)}"
+    logger.error(error_msg, exc_info=True)
+    
+    # Manual CORS headers for the exception response in case the middleware is bypassed
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "*",
+        "Access-Control-Allow-Headers": "*",
+    }
+    
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "error_type": type(exc).__name__},
+        headers=headers
+    )
+
+
 # ─── Internal Endpoint (called by engines) ────────────────────
 @app.post("/internal/alerts")
 async def receive_alert(payload: AlertPayload, from_stream: bool = False):
@@ -133,59 +146,49 @@ async def receive_alert(payload: AlertPayload, from_stream: bool = False):
 
     # Check for existing active duplicate
     existing = await database.fetch_one(
-        "SELECT id FROM alerts WHERE dedupe_key = :key AND status = 'active' AND created_at > NOW() - INTERVAL '24 hours'",
+        "SELECT id FROM alerts WHERE dedupe_key = :key AND status = 'active' AND created_at > NOW() - INTERVAL '1 hour'",
         {"key": dedupe_key}
     )
     if existing:
         logger.info(f"Deduplicated alert: {dedupe_key[:12]}...")
         return {"status": "deduplicated", "existing_id": str(existing["id"])}
 
-    priority = calculate_priority(payload.severity, payload.type, now)
+    # Robustness: ensure severity is lowercased to match DB constraint
+    sev = payload.severity.lower()
+    priority = calculate_priority(sev, payload.type, now)
 
     alert_id = await database.execute("""
-        INSERT INTO alerts (type, source_id, severity, message, details, status, priority, dedupe_key, created_at)
-        VALUES (:type, :source_id, :severity, :message, :details, 'active', :priority, :dedupe_key, :created_at)
+        INSERT INTO alerts (type, source_id, severity, message, details, status, priority, dedupe_key, account_id, iam_entity, service, created_at)
+        VALUES (:type, :source_id, :severity, :message, :details, 'active', :priority, :dedupe_key, :account_id, :iam_entity, :service, :created_at)
+        ON CONFLICT (dedupe_key) DO UPDATE SET 
+            status = 'active', severity = EXCLUDED.severity, priority = EXCLUDED.priority, details = EXCLUDED.details, created_at = EXCLUDED.created_at
         RETURNING id
     """, {
         "type": payload.type,
         "source_id": payload.source_id,
-        "severity": payload.severity,
+        "severity": sev,
         "message": payload.message,
         "details": json.dumps(payload.details or {}),
         "priority": priority,
         "dedupe_key": dedupe_key,
+        "account_id": payload.account_id,
+        "iam_entity": payload.iam_entity,
+        "service": payload.service,
         "created_at": now,
     })
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> a8b7305 (old configuration)
-    # PROVAGATION: If alert came from API (not stream), broadcast it to Redis for live UI updates
-    if not from_stream and redis_client:
+    # Broadcast enriched alert to 'alerts_stream' for the frontend SSE consumers
+    if redis_client:
         try:
             full_payload = payload.dict()
             full_payload["alert_id"] = str(alert_id)
+            full_payload["severity"] = sev
             full_payload["priority"] = priority
+            full_payload["created_at"] = now.isoformat()
             await redis_client.publish("alerts_stream", json.dumps(full_payload, default=str))
-            logger.info(f"Broadcasted internal alert to stream: {payload.message[:60]}")
+            logger.info(f"Broadcasted alert to stream: {payload.message[:60]}")
         except Exception as e:
             logger.error(f"Failed to broadcast alert: {e}")
-<<<<<<< HEAD
-=======
-    # Publish to Redis pub/sub for SSE clients
-    alert_notification = json.dumps({
-        "id": str(alert_id),
-        "type": payload.type,
-        "severity": payload.severity,
-        "message": payload.message,
-        "priority": priority,
-        "created_at": now.isoformat(),
-    })
-    await redis_client.publish("alert_notifications", alert_notification)
->>>>>>> f79aacfd0bc790d68202603431c151319038c798
-=======
->>>>>>> a8b7305 (old configuration)
 
     logger.info(f"Stored alert [{payload.severity}] {payload.message[:60]} priority={priority}")
     return {"status": "created", "alert_id": str(alert_id), "priority": priority}

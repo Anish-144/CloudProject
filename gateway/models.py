@@ -80,6 +80,9 @@ class AlertOut(BaseModel):
     details: Optional[dict]
     status: str
     priority: float
+    account_id: Optional[str] = None
+    iam_entity: Optional[str] = None
+    service: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -131,12 +134,21 @@ class UserOut(BaseModel):
 
 
 class ResourceOut(BaseModel):
-    id: UUID
-    cloud_provider: str
-    resource_type: str
-    region: str
-    aws_account_name: Optional[str] = None
-    created_at: datetime
+    id: Optional[UUID] = None
+    resource_id: str
+    type: Optional[str] = None
+    name: Optional[str] = None
+    state: Optional[str] = None
+    region: Optional[str] = None
+    cpu: Optional[float] = None
+    size_mb: Optional[float] = None
+    last_activity: Optional[datetime] = None
+    estimated_cost: Optional[float] = None
+    idle: Optional[bool] = None
+    recommendation: Optional[str] = None
+    iam_user: Optional[str] = None
+    ownership_source: Optional[str] = None
+    account_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -148,4 +160,11 @@ class AccountStats(BaseModel):
     aws_id: str
     user_count: int
     resource_count: int
+    total_cost: float
+
+
+class UserSummaryOut(BaseModel):
+    iam_user: str
+    resource_count: int
+    idle_resources: int
     total_cost: float

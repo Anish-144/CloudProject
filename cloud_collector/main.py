@@ -221,19 +221,22 @@ async def upsert_cloud_resource(db: Database, entry: dict):
 # ── Redis Alert Publisher ──────────────────────────────────────
 
 def publish_idle_alert(redis_client, resource_id: str, resource_type: str,
-                       severity: str, message: str, recommendation: str):
+                       severity: str, message: str, recommendation: str, entry: dict = {}):
     """Publish an idle-resource alert to Redis so SSE consumers receive it."""
     try:
         payload = {
             "severity":       severity,
-            "type":           "FINOPS",
+            "type":           "finops",
             "resource_id":    resource_id,
             "resource_type":  resource_type,
             "message":        message,
             "recommendation": recommendation,
+            "account_id":     entry.get("account_id"),
+            "iam_entity":     entry.get("iam_entity"),
+            "service":        resource_type.upper(),
             "timestamp":      datetime.now(timezone.utc).isoformat(),
         }
-        redis_client.publish("alerts_stream", json.dumps(payload))
+        redis_client.publish("alerts_ingest", json.dumps(payload))
         logger.info(f"Idle alert published: {message[:80]}")
     except Exception as e:
         logger.error(f"Failed to publish idle alert: {e}")
@@ -351,13 +354,21 @@ async def store_compliance_check(db: Database, check: dict):
     })
 
 
-async def publish_log_entry(db: Database, log_entry: dict):
+async def publish_log_entry(db: Database, redis_client, log_entry: dict):
     log_entry["data_source"] = "aws_live"
     log_entry["timestamp"]   = log_entry.get("timestamp", datetime.now(timezone.utc).isoformat())
+    
+    log_data_str = json.dumps(log_entry, default=str)
     await db.execute(
         "INSERT INTO incoming_logs (log_data) VALUES (:log_data)",
-        {"log_data": json.dumps(log_entry, default=str)}
+        {"log_data": log_data_str}
     )
+    
+    if redis_client:
+        try:
+            redis_client.xadd("cloud_logs", {"data": log_data_str})
+        except Exception as e:
+            logger.error(f"Failed to publish to redis cloud_logs stream: {e}")
 
 
 async def publish_critical_alert(http_client: httpx.AsyncClient, resource_id: str,
@@ -369,6 +380,9 @@ async def publish_critical_alert(http_client: httpx.AsyncClient, resource_id: st
         "severity":  "critical",
         "message":   message,
         "details":   details,
+        "account_id": details.get("account_id"),
+        "iam_entity": details.get("iam_entity"),
+        "service":    details.get("service") or "IAM",
     }
     try:
         resp = await http_client.post(f"{ALERT_SERVICE_URL}/internal/alerts", json=payload, timeout=5)
@@ -383,7 +397,8 @@ async def publish_critical_alert(http_client: httpx.AsyncClient, resource_id: st
 async def collect_ec2_and_cloudwatch(
     db: Database, redis_client, http_client: httpx.AsyncClient,
     cloudtrail_mapping: dict,
-    session, region: str, account_name: str, account_db_id: Optional[str] = None
+    session, region: str, account_name: str, account_db_id: Optional[str] = None,
+    aws_account_id: str = "unknown", aws_iam_arn: str = "unknown"
 ):
     logger.info(f"═══ EC2+CW: {account_name} / {region} ═══")
     ec2 = EC2Collector(region=region, session=session)
@@ -468,9 +483,10 @@ async def collect_ec2_and_cloudwatch(
 
         if idle and redis_client:
             publish_idle_alert(
-                redis_client, instance_id, "ec2", "HIGH",
+                redis_client, instance_id, "ec2", "high",
                 f"Idle EC2 instance detected: {instance_id} (CPU {cpu_avg:.1f}%)",
                 f"Stop instance to save ~${daily_cost * 30:.2f}/month",
+                {"account_id": aws_account_id, "iam_entity": iam_user}
             )
 
         log_entry = {
@@ -488,13 +504,13 @@ async def collect_ec2_and_cloudwatch(
             "account_name":    account_name,
             "idle":            idle,
         }
-        await publish_log_entry(db, log_entry)
+        await publish_log_entry(db, redis_client, log_entry)
 
         await store_compliance_check(db, {
             "aws_resource_id": instance_id,
             "check_type":      "ec2_public_ip",
             "check_passed":    not inst.get("has_public_ip", False),
-            "details":         {"public_ip": inst.get("metadata", {}).get("public_ip"), "account": account_name},
+            "details":         {"public_ip": inst.get("metadata", {}).get("public_ip"), "account": account_name, "account_id": aws_account_id, "iam_entity": iam_user},
         })
 
     await clean_stale_resources(db, "ec2")
@@ -506,7 +522,8 @@ async def collect_ec2_and_cloudwatch(
 async def collect_s3(
     db: Database, redis_client, http_client: httpx.AsyncClient,
     cloudtrail_mapping: dict,
-    session, region: str, account_name: str, account_db_id: Optional[str] = None
+    session, region: str, account_name: str, account_db_id: Optional[str] = None,
+    aws_account_id: str = "unknown", aws_iam_arn: str = "unknown"
 ):
     logger.info(f"═══ S3: {account_name} / {region} ═══")
     s3      = S3Collector(region=region, session=session)
@@ -576,9 +593,10 @@ async def collect_s3(
 
         if idle and redis_client:
             publish_idle_alert(
-                redis_client, bucket_name, "s3", "MEDIUM",
+                redis_client, bucket_name, "s3", "medium",
                 f"Idle S3 bucket detected: {bucket_name} (no changes in {S3_IDLE_DAYS}+ days)",
                 "Archive to Glacier or delete bucket to optimize cost",
+                {"account_id": aws_account_id, "iam_entity": iam_user}
             )
 
         log_entry = {
@@ -595,7 +613,7 @@ async def collect_s3(
             "account_name":      account_name,
             "idle":              idle,
         }
-        await publish_log_entry(db, log_entry)
+        await publish_log_entry(db, redis_client, log_entry)
 
         checks = [
             ("s3_public_access", not bucket.get("public_access", True)),
@@ -615,7 +633,7 @@ async def collect_s3(
             await publish_critical_alert(
                 http_client, bucket_name,
                 f"[{account_name}] S3 bucket '{bucket_name}' has public access enabled",
-                {"bucket": bucket_name, "public_access": True, "account": account_name},
+                {"bucket": bucket_name, "public_access": True, "account": account_name, "account_id": aws_account_id, "iam_entity": iam_user, "service": "S3"},
             )
 
     await clean_stale_resources(db, "s3")
@@ -627,7 +645,8 @@ async def collect_s3(
 async def collect_lambda(
     db: Database, redis_client, http_client: httpx.AsyncClient,
     cloudtrail_mapping: dict,
-    session, region: str, account_name: str, account_db_id: Optional[str] = None
+    session, region: str, account_name: str, account_db_id: Optional[str] = None,
+    aws_account_id: str = "unknown", aws_iam_arn: str = "unknown"
 ):
     logger.info(f"═══ Lambda: {account_name} / {region} ═══")
     lc        = LambdaCollector(region=region, session=session)
@@ -695,9 +714,10 @@ async def collect_lambda(
 
         if idle and redis_client:
             publish_idle_alert(
-                redis_client, fn_name, "lambda", "LOW",
+                redis_client, fn_name, "lambda", "low",
                 f"Idle Lambda function detected: {fn_name} (no invocations in {LAMBDA_IDLE_DAYS}+ days)",
                 "Delete unused function to reduce attack surface and clutter",
+                {"account_id": aws_account_id, "iam_entity": iam_user}
             )
 
         log_entry = {
@@ -710,7 +730,7 @@ async def collect_lambda(
             "account_name":    account_name,
             "idle":            idle,
         }
-        await publish_log_entry(db, log_entry)
+        await publish_log_entry(db, redis_client, log_entry)
 
     await clean_stale_resources(db, "lambda")
     logger.info(f"Lambda cycle complete: {len(functions)} functions in {account_name}/{region}")
@@ -720,7 +740,8 @@ async def collect_lambda(
 
 async def collect_iam(
     db: Database, redis_client, http_client: httpx.AsyncClient,
-    session, account_name: str, account_db_id: Optional[str] = None
+    session, account_name: str, account_db_id: Optional[str] = None,
+    aws_account_id: str = "unknown", aws_iam_arn: str = "unknown"
 ):
     logger.info(f"═══ IAM: {account_name} ═══")
     from collectors import IAMCollector
@@ -750,7 +771,7 @@ async def collect_iam(
             "is_root_account": user.get("is_root_account", False),
             "account_name":   account_name,
         }
-        await publish_log_entry(db, log_entry)
+        await publish_log_entry(db, redis_client, log_entry)
 
         checks = [
             ("iam_mfa",          user.get("mfa_enabled", False)),
@@ -769,28 +790,28 @@ async def collect_iam(
             await publish_critical_alert(
                 http_client, user_id,
                 f"[{account_name}] Root account detected in IAM user list",
-                {"username": user.get("metadata", {}).get("username"), "account": account_name},
+                {"username": user.get("metadata", {}).get("username"), "account": account_name, "account_id": aws_account_id, "iam_entity": "root", "service": "IAM"},
             )
 
         if not user.get("mfa_enabled", False):
             await publish_critical_alert(
                 http_client, user_id,
                 f"[{account_name}] IAM user '{user.get('metadata', {}).get('username')}' has no MFA enabled",
-                {"username": user.get("metadata", {}).get("username"), "mfa_enabled": False, "account": account_name},
+                {"username": user.get("metadata", {}).get("username"), "mfa_enabled": False, "account": account_name, "account_id": aws_account_id, "iam_entity": user.get('metadata', {}).get('username'), "service": "IAM"},
             )
 
         if user.get("has_administrator_access", False):
             await publish_critical_alert(
                 http_client, user_id,
                 f"[{account_name}] IAM user '{user.get('metadata', {}).get('username')}' has AdministratorAccess attached",
-                {"username": user.get('metadata', {}).get('username'), "has_administrator_access": True, "account": account_name},
+                {"username": user.get('metadata', {}).get('username'), "has_administrator_access": True, "account": account_name, "account_id": aws_account_id, "iam_entity": user.get('metadata', {}).get('username'), "service": "IAM"},
             )
 
         if user.get("has_wildcard_policy", False):
             await publish_critical_alert(
                 http_client, user_id,
                 f"[{account_name}] IAM user '{user.get('metadata', {}).get('username')}' has potentially overly permissive wildcard policies",
-                {"username": user.get('metadata', {}).get('username'), "has_wildcard_policy": True, "account": account_name},
+                {"username": user.get('metadata', {}).get('username'), "has_wildcard_policy": True, "account": account_name, "account_id": aws_account_id, "iam_entity": user.get('metadata', {}).get('username'), "service": "IAM"},
             )
 
     await clean_stale_resources(db, "iam")
@@ -810,6 +831,18 @@ async def collect_single_account(
     regions_to_scan = [r.strip() for r in env_regions.split(",")] if env_regions else [AWS_REGION]
     
     account_name = os.getenv("AWS_ACCOUNT_NAME", "Primary Account")
+    
+    # Get Real AWS Account Info from STS
+    aws_account_id = "unknown"
+    aws_iam_arn    = "unknown"
+    try:
+        sts = boto3.client('sts', region_name=AWS_REGION)
+        identity = sts.get_caller_identity()
+        aws_account_id = identity.get('Account')
+        aws_iam_arn    = identity.get('Arn')
+        logger.info(f"Collector Identity: Account={aws_account_id}, ARN={aws_iam_arn}")
+    except Exception as e:
+        logger.warning(f"Could not fetch STS identity: {e}")
 
     for region in regions_to_scan:
         logger.info(f"Targeting region: {region}")
@@ -821,19 +854,19 @@ async def collect_single_account(
 
         if collector_type in ("all", "ec2"):
             try:
-                await collect_ec2_and_cloudwatch(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name)
+                await collect_ec2_and_cloudwatch(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name, None, aws_account_id, aws_iam_arn)
             except Exception as e:
                 logger.error(f"EC2 failed in {region}: {e}")
 
         if collector_type in ("all", "s3"):
             try:
-                await collect_s3(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name)
+                await collect_s3(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name, None, aws_account_id, aws_iam_arn)
             except Exception as e:
                 logger.error(f"S3 failed in {region}: {e}")
 
         if collector_type in ("all", "lambda"):
             try:
-                await collect_lambda(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name)
+                await collect_lambda(db, redis_client, http_client, cloudtrail_mapping, session, region, account_name, None, aws_account_id, aws_iam_arn)
             except Exception as e:
                 logger.error(f"Lambda failed in {region}: {e}")
 
@@ -841,7 +874,7 @@ async def collect_single_account(
         try:
             # IAM is global, only run once
             session = boto3.Session(region_name=AWS_REGION)
-            await collect_iam(db, redis_client, http_client, session, account_name)
+            await collect_iam(db, redis_client, http_client, session, account_name, None, aws_account_id, aws_iam_arn)
         except Exception as e:
             logger.error(f"IAM failed: {e}")
 

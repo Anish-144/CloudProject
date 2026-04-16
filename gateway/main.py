@@ -50,8 +50,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -91,7 +91,16 @@ app.include_router(analytics_router)
 async def generic_exception_handler(request: Request, exc: Exception):
     error_msg = f"Unhandled error during {request.method} {request.url.path}: {str(exc)}"
     logger.error(error_msg, exc_info=True)
+    
+    # Manual CORS headers for the exception response in case the middleware is bypassed
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "*",
+        "Access-Control-Allow-Headers": "*",
+    }
+    
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error", "error_type": type(exc).__name__}
+        content={"detail": "Internal server error", "error_type": type(exc).__name__},
+        headers=headers
     )

@@ -4,8 +4,6 @@ import logging
 import json
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
-import csv
-import io
 from databases import Database
 from auth import (
     get_current_user, verify_password, create_access_token,
@@ -14,10 +12,11 @@ from auth import (
 )
 from models import (
     LoginRequest, TokenResponse, LogBatch, IngestResponse,
-    AlertOut, FinOpsSummary, ComplianceScore, UserOut, AccountStats, ResourceOut,
+    AlertOut, FinOpsSummary, ComplianceScore, UserOut, ResourceOut,
     UserSummaryOut
 )
 import redis.asyncio as aioredis
+import os
 from datetime import datetime
 from typing import AsyncGenerator, Optional
 import asyncio
@@ -103,7 +102,17 @@ async def get_alerts(
     params["limit"] = limit
     params["offset"] = offset
     rows = await database.fetch_all(query, params)
-    return [dict(r) for r in rows]
+    transformed = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("details"), str):
+            try:
+                import json
+                d["details"] = json.loads(d["details"])
+            except:
+                d["details"] = {}
+        transformed.append(d)
+    return transformed
 
 
 @alerts_router.get("/stream")
@@ -113,7 +122,7 @@ async def alert_stream(current_user: dict = Depends(require_authenticated)):
 
     async def event_generator() -> AsyncGenerator[str, None]:
         pubsub = redis_client.pubsub()
-        await pubsub.subscribe("alert_notifications")
+        await pubsub.subscribe("alerts_stream")
         try:
             yield "data: {\"type\": \"connected\", \"message\": \"CloudGuard SSE stream active\"}\n\n"
             while True:
@@ -126,7 +135,7 @@ async def alert_stream(current_user: dict = Depends(require_authenticated)):
         except asyncio.CancelledError:
             pass
         finally:
-            await pubsub.unsubscribe("alert_notifications")
+            await pubsub.unsubscribe("alerts_stream")
             await pubsub.close()
 
     return StreamingResponse(
@@ -147,7 +156,7 @@ async def acknowledge_alert(alert_id: str, current_user: dict = Depends(require_
 
 
 @alerts_router.get("/export")
-async def export_alerts(current_user: dict = Depends(require_authenticated)):
+async def export_alerts_legacy(current_user: dict = Depends(require_authenticated)):
     from main import database
     import io, csv
     rows = await database.fetch_all("SELECT * FROM alerts ORDER BY created_at DESC")
@@ -201,7 +210,7 @@ async def get_all_alerts(limit: int = 50, offset: int = 0, current_user: dict = 
 
 
 @public_alerts_router.get("/stream")
-async def alerts_stream(current_user: dict = Depends(require_authenticated)):
+async def public_alerts_stream(current_user: dict = Depends(require_authenticated)):
     """Server-sent events for real-time alerts."""
     import httpx
     
@@ -228,6 +237,7 @@ async def alerts_stream(current_user: dict = Depends(require_authenticated)):
             "Access-Control-Allow-Credentials": "true",
         }
     )
+
 # ── FinOps Router ─────────────────────────────────────────────
 # Protected: finops_manager, cloud_admin, admin
 finops_router = APIRouter(prefix="/api/v1/finops", tags=["FinOps"])
@@ -416,61 +426,13 @@ async def get_account_stats(current_user: dict = Depends(require_cloud_admin)):
     from main import database
     rows = await database.fetch_all("""
         SELECT 
-<<<<<<< HEAD
-<<<<<<< HEAD
             COALESCE(account_name, 'Unknown Account') as display_name,
             COUNT(resource_id) as resource_count,
             COUNT(resource_id) FILTER (WHERE idle = true) as idle_resources,
-=======
-            COALESCE(account_name, 'Unknown Account') as display_name,
-            COUNT(id) as resource_count,
-            COUNT(id) FILTER (WHERE idle = true) as idle_resources,
->>>>>>> a8b7305 (old configuration)
             COALESCE(SUM(estimated_cost), 0) as total_cost
         FROM cloud_resources
         GROUP BY COALESCE(account_name, 'Unknown Account')
         ORDER BY total_cost DESC
-<<<<<<< HEAD
-    """)
-    return [
-        UserSummaryOut(
-            iam_user=r["display_name"],  # Using account name as the label
-            resource_count=int(r["resource_count"] or 0),
-            idle_resources=int(r["idle_resources"] or 0),
-            total_cost=float(r["total_cost"] or 0)
-        ) for r in rows
-    ]
-=======
-            a.id AS account_id, 
-            a.name AS account_name, 
-            a.aws_account_id AS aws_id,
-            (SELECT COUNT(*) FROM users u WHERE u.aws_account_id = a.id) AS user_count,
-            (SELECT COUNT(*) FROM resources r WHERE r.aws_account_id = a.id) AS resource_count,
-            (SELECT COALESCE(SUM(l.cost), 0) FROM usage_logs l JOIN resources r ON l.resource_id = r.id WHERE r.aws_account_id = a.id) AS total_cost
-        FROM aws_accounts a
-        GROUP BY a.id, a.name, a.aws_account_id
-    """)
-    return [dict(r) for r in rows]
->>>>>>> f79aacfd0bc790d68202603431c151319038c798
-
-
-@admin_router.patch("/users/{user_id}/role")
-async def update_user_role(
-    user_id: str,
-    body: dict,
-    current_user: dict = Depends(require_cloud_admin)
-):
-    from main import database
-    new_role = body.get("role")
-    valid_roles = ["admin", "cloud_admin", "finops_manager", "compliance_manager", "it_admin", "viewer"]
-    if new_role not in valid_roles:
-        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
-    await database.execute(
-        "UPDATE users SET role = :role WHERE id = :id",
-        {"role": new_role, "id": user_id}
-    )
-    return {"message": f"User role updated to '{new_role}'"}
-=======
     """)
     return [
         UserSummaryOut(
@@ -480,7 +442,30 @@ async def update_user_role(
             total_cost=float(r["total_cost"] or 0)
         ) for r in rows
     ]
->>>>>>> a8b7305 (old configuration)
+
+
+@admin_router.get("/stats/by-user", response_model=list[UserSummaryOut])
+async def get_user_stats(current_user: dict = Depends(require_cloud_admin)):
+    from main import database
+    rows = await database.fetch_all("""
+        SELECT 
+            iam_user,
+            COUNT(resource_id) as resource_count,
+            COUNT(resource_id) FILTER (WHERE idle = true) as idle_resources,
+            COALESCE(SUM(estimated_cost), 0) as total_cost
+        FROM cloud_resources
+        WHERE iam_user != 'unknown'
+        GROUP BY iam_user
+        ORDER BY total_cost DESC
+    """)
+    return [
+        UserSummaryOut(
+            iam_user=r["iam_user"],
+            resource_count=int(r["resource_count"] or 0),
+            idle_resources=int(r["idle_resources"] or 0),
+            total_cost=float(r["total_cost"] or 0)
+        ) for r in rows
+    ]
 
 
 @admin_router.get("/resources", response_model=list[ResourceOut])
@@ -489,114 +474,13 @@ async def list_resources(type: Optional[str] = None, current_user: dict = Depend
     query = "SELECT * FROM cloud_resources"
     params = {}
     if type:
-        query += " WHERE resource_type = :type"
+        query += " WHERE type = :type"
         params["type"] = type
     query += " ORDER BY last_activity DESC NULLS LAST"
     
     rows = await database.fetch_all(query, params)
     return [dict(r) for r in rows]
 
-<<<<<<< HEAD
-@admin_router.get("/export/alerts")
-async def export_alerts(
-    start_date: str = Query(None),
-    end_date: str = Query(None),
-    current_user: dict = Depends(require_cloud_admin)
-):
-    """Export system alerts to CSV within a date range."""
-    from main import database
-    try:
-        query = "SELECT severity, type, status, message, created_at FROM alerts WHERE 1=1"
-        params = {}
-        if start_date:
-            query += " AND created_at >= :start"
-            params["start"] = datetime.fromisoformat(start_date)
-        if end_date:
-            query += " AND created_at <= :end"
-            # Append 23:59:59 to include the full end day
-            params["end"] = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
-        query += " ORDER BY created_at DESC"
-
-        rows = await database.fetch_all(query, params)
-        
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["Severity", "Type", "Status", "Message", "Timestamp"])
-        for r in rows:
-            writer.writerow([r["severity"], r["type"], r["status"], r["message"], str(r["created_at"])])
-        
-        output.seek(0)
-        return StreamingResponse(
-            io.BytesIO(output.getvalue().encode()),
-            media_type="text/csv",
-            headers={
-                "Content-Disposition": f"attachment; filename=alerts_export_{datetime.now().strftime('%Y%m%d')}.csv",
-                "Access-Control-Allow-Origin": "http://localhost:3000",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Expose-Headers": "Content-Disposition"
-            }
-        )
-    except Exception as e:
-        logger.error(f"Alert export error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@admin_router.get("/export/usage")
-async def export_usage(
-    start_date: str = Query(None),
-    end_date: str = Query(None),
-    current_user: dict = Depends(require_cloud_admin)
-):
-    """Export resource usage logs to CSV within a date range."""
-    from main import database
-    try:
-        # Joining with resources table which has aws_resource_id added from migrations
-        query = """
-            SELECT r.aws_resource_id, r.resource_type, u.cpu_usage, u.memory_usage, u.cost, u.timestamp 
-            FROM usage_logs u
-            JOIN resources r ON u.resource_id = r.id
-            WHERE 1=1
-        """
-        params = {}
-        if start_date:
-            query += " AND u.timestamp >= :start"
-            params["start"] = datetime.fromisoformat(start_date)
-        if end_date:
-            query += " AND u.timestamp <= :end"
-            # Append 23:59:59 to include the full end day
-            params["end"] = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
-        query += " ORDER BY u.timestamp DESC"
-
-        rows = await database.fetch_all(query, params)
-        
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["AWS Resource ID", "Type", "CPU Usage (%)", "Memory Usage (%)", "Cost ($)", "Timestamp"])
-        for r in rows:
-            writer.writerow([
-                r["aws_resource_id"] or "N/A", 
-                r["resource_type"] or "unknown", 
-                r["cpu_usage"], 
-                r["memory_usage"], 
-                r["cost"], 
-                str(r["timestamp"])
-            ])
-        
-        output.seek(0)
-        return StreamingResponse(
-            io.BytesIO(output.getvalue().encode()),
-            media_type="text/csv",
-            headers={
-                "Content-Disposition": f"attachment; filename=usage_export_{datetime.now().strftime('%Y%m%d')}.csv",
-                "Access-Control-Allow-Origin": "http://localhost:3000",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Expose-Headers": "Content-Disposition"
-            }
-        )
-    except Exception as e:
-        logger.error(f"Usage export error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-=======
 
 @admin_router.get("/overview")
 async def get_admin_overview(current_user: dict = Depends(require_cloud_admin)):
@@ -665,7 +549,6 @@ async def export_usage(
     """Export resource usage logs to CSV within a date range."""
     from main import database
     try:
-        # Fixed resource ID access to avoid dict/object confusion
         query = """
             SELECT 
                 COALESCE(r.aws_resource_id, r.resource_id) as resource_id, 
@@ -693,7 +576,6 @@ async def export_usage(
         writer = csv.writer(output)
         writer.writerow(["Resource ID", "Type", "CPU Usage (%)", "Memory Usage (%)", "Cost ($)", "Timestamp"])
         for r in rows:
-            # Use dictionary access for database records
             writer.writerow([
                 r["resource_id"], 
                 r["resource_type"], 
@@ -723,12 +605,10 @@ async def export_usage(
 async def clear_historical_data(current_user: dict = Depends(require_cloud_admin)):
     from main import database
     try:
-        # Delete raw data
         await database.execute("DELETE FROM usage_logs WHERE timestamp < NOW() - INTERVAL '7 days'")
         await database.execute("DELETE FROM alerts WHERE created_at < NOW() - INTERVAL '30 days'")
         return {"status": "success", "message": "Historical data cleared (usage >7d, alerts >30d)", "deleted_records": {"raw_finops_events": 100, "raw_compliance_logs": 50, "raw_infrastructure_alerts": 25}}
     except Exception as e:
-<<<<<<< HEAD
         logger.error(f"Error clearing historical data: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -736,18 +616,57 @@ async def clear_historical_data(current_user: dict = Depends(require_cloud_admin
         )
 
 
+@admin_router.patch("/users/{user_id}/role")
+async def update_user_role(
+    user_id: str,
+    body: dict,
+    current_user: dict = Depends(require_cloud_admin)
+):
+    from main import database
+    new_role = body.get("role")
+    valid_roles = ["admin", "cloud_admin", "finops_manager", "compliance_manager", "it_admin", "viewer"]
+    if new_role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+    await database.execute(
+        "UPDATE users SET role = :role WHERE id = :id",
+        {"role": new_role, "id": user_id}
+    )
+    return {"message": f"User role updated to '{new_role}'"}
+
 # ── Analytics Router ──────────────────────────────────────────
 analytics_router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
 
+@analytics_router.get("/overview")
+async def get_analytics_overview(current_user: dict = Depends(require_cloud_admin)):
+    """Returns a combined analytics overview for the admin dashboard."""
+    from main import database
+    resources = await database.fetch_one("""
+        SELECT
+            COUNT(*) as total_resources,
+            COUNT(*) FILTER (WHERE idle = true) as idle_resources,
+            COALESCE(SUM(estimated_cost), 0) as total_cost,
+            COALESCE(SUM(estimated_cost) FILTER (WHERE idle = true), 0) as idle_cost,
+            COUNT(DISTINCT account_name) as account_count
+        FROM cloud_resources
+    """)
+    alerts = await database.fetch_one("""
+        SELECT
+            COUNT(*) as total_alerts,
+            COUNT(*) FILTER (WHERE severity = 'critical') as critical_alerts,
+            COUNT(*) FILTER (WHERE status = 'active') as active_alerts
+        FROM alerts
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+    """)
+    return {
+        "resources": dict(resources) if resources else {},
+        "alerts_24h": dict(alerts) if alerts else {},
+    }
+
+
 @analytics_router.get("/cost-trend")
 async def get_cost_trend(current_user: dict = Depends(require_cloud_admin)):
-    """
-    Get cost trend data from analytics_cost_trends table.
-    Returns: list of {date, cost}
-    """
     from main import database
-    
     try:
         rows = await database.fetch_all(
             "SELECT date, cost FROM analytics_cost_trends ORDER BY date ASC"
@@ -760,12 +679,7 @@ async def get_cost_trend(current_user: dict = Depends(require_cloud_admin)):
 
 @analytics_router.get("/compliance-summary")
 async def get_compliance_summary(current_user: dict = Depends(require_cloud_admin)):
-    """
-    Get compliance summary data from analytics_violation_summary table.
-    Returns: list of {category, compliance_percentage}
-    """
     from main import database
-    
     try:
         rows = await database.fetch_all(
             "SELECT category, compliance_percentage FROM analytics_violation_summary"
@@ -778,12 +692,7 @@ async def get_compliance_summary(current_user: dict = Depends(require_cloud_admi
 
 @analytics_router.get("/resource-metrics")
 async def get_resource_metrics(current_user: dict = Depends(require_cloud_admin)):
-    """
-    Get resource metrics data from analytics_resource_metrics table.
-    Returns: list of {date, idle_count}
-    """
     from main import database
-    
     try:
         rows = await database.fetch_all(
             "SELECT date, idle_count FROM analytics_resource_metrics ORDER BY date ASC"
@@ -792,8 +701,3 @@ async def get_resource_metrics(current_user: dict = Depends(require_cloud_admin)
     except Exception as e:
         logger.error(f"Error fetching resource metrics: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch resource metrics data")
->>>>>>> f79aacfd0bc790d68202603431c151319038c798
-=======
-        logger.error(f"Error clearing data: {e}")
-        raise HTTPException(status_code=500, detail="Failed to clear data")
->>>>>>> a8b7305 (old configuration)

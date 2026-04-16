@@ -138,7 +138,7 @@ async def record_violation(db: Database, resource_id: str, rule: dict, log: dict
     return severity
 
 
-async def publish_alert(client: httpx.AsyncClient, resource_id: str, rule: dict, severity: str, score: float):
+async def publish_alert(client: httpx.AsyncClient, resource_id: str, rule: dict, severity: str, score: float, details: dict):
     payload = {
         "type": "compliance",
         "source_id": resource_id,
@@ -151,6 +151,9 @@ async def publish_alert(client: httpx.AsyncClient, resource_id: str, rule: dict,
             "weight": rule["weight"],
             "compliance_score": round(score, 1),
         },
+        "account_id": details.get("account_id"),
+        "iam_entity": details.get("iam_entity"),
+        "service":    details.get("service") or rule.get("category"),
     }
     try:
         resp = await client.post(f"{ALERT_SERVICE_URL}/internal/alerts", json=payload, timeout=5)
@@ -176,7 +179,7 @@ async def process_log(db: Database, client: httpx.AsyncClient, rules: list[dict]
             severity = await record_violation(db, resource_id, rule, log)
             violated_ids.add(str(rule["id"]))
             score = calculate_score(rules, violated_ids)
-            await publish_alert(client, resource_id, rule, severity, score)
+            await publish_alert(client, resource_id, rule, severity, score, log)
             logger.info(f"Violation: '{rule['name']}' resource={resource_id} severity={severity}")
 
     if violated_ids:
