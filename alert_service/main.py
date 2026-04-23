@@ -160,7 +160,7 @@ async def receive_alert(payload: AlertPayload, from_stream: bool = False):
     alert_id = await database.execute("""
         INSERT INTO alerts (type, source_id, severity, message, details, status, priority, dedupe_key, account_id, iam_entity, service, created_at)
         VALUES (:type, :source_id, :severity, :message, :details, 'active', :priority, :dedupe_key, :account_id, :iam_entity, :service, :created_at)
-        ON CONFLICT (dedupe_key) DO UPDATE SET 
+        ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO UPDATE SET 
             status = 'active', severity = EXCLUDED.severity, priority = EXCLUDED.priority, details = EXCLUDED.details, created_at = EXCLUDED.created_at
         RETURNING id
     """, {

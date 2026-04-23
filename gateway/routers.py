@@ -551,14 +551,14 @@ async def export_usage(
     try:
         query = """
             SELECT 
-                COALESCE(r.aws_resource_id, r.resource_id) as resource_id, 
+                r.aws_resource_id as resource_id, 
                 r.resource_type, 
                 u.cpu_usage, 
                 u.memory_usage, 
                 u.cost, 
                 u.timestamp 
             FROM usage_logs u
-            JOIN cloud_resources r ON u.resource_id = r.id::text OR u.resource_id = r.resource_id
+            JOIN resources r ON u.resource_id = r.id
             WHERE 1=1
         """
         params = {}
@@ -613,6 +613,29 @@ async def clear_historical_data(current_user: dict = Depends(require_cloud_admin
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to clear historical data"
+        )
+
+
+@admin_router.post("/clear-all-data")
+async def clear_all_data(current_user: dict = Depends(require_cloud_admin)):
+    """Wipe ALL usage logs and alerts immediately."""
+    from main import database
+    try:
+        await database.execute("DELETE FROM usage_logs")
+        await database.execute("DELETE FROM alerts")
+        await database.execute("DELETE FROM violations")
+        await database.execute("DELETE FROM incoming_logs")
+        # Optional: Clear cloud_resources to show an immediate empty state
+        # (The collector will re-populate it on next cycle)
+        await database.execute("DELETE FROM cloud_resources")
+        
+        logger.warning(f"Admin {current_user['email']} wiped all system logs/alerts/resources.")
+        return {"status": "success", "message": "All logs, alerts, resources and violations have been cleared. Collector will re-scan soon."}
+    except Exception as e:
+        logger.error(f"Error clearing all data: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to clear all data"
         )
 
 

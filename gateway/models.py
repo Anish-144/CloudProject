@@ -149,6 +149,7 @@ class ResourceOut(BaseModel):
     iam_user: Optional[str] = None
     ownership_source: Optional[str] = None
     account_name: Optional[str] = None
+    aws_account_id: Optional[str] = None
 
     class Config:
         from_attributes = True

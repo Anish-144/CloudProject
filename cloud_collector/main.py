@@ -176,14 +176,15 @@ async def upsert_cloud_resource(db: Database, entry: dict):
         iam_user = "unknown"
 
     account_name = entry.get("account_name") or "Unknown"
+    aws_account_id = entry.get("aws_account_id")
 
     await db.execute("""
         INSERT INTO cloud_resources
             (resource_id, type, name, state, region, cpu, size_mb,
-             last_activity, estimated_cost, idle, recommendation, iam_user, ownership_source, last_updated, last_seen, account_name)
+             last_activity, estimated_cost, idle, recommendation, iam_user, ownership_source, last_updated, last_seen, account_name, aws_account_id)
         VALUES
             (:resource_id, :type, :name, :state, :region, :cpu, :size_mb,
-             :last_activity, :estimated_cost, :idle, :recommendation, :iam_user, :ownership_source, NOW(), NOW(), :acct_name)
+             :last_activity, :estimated_cost, :idle, :recommendation, :iam_user, :ownership_source, NOW(), NOW(), :acct_name, :aws_acct_id)
         ON CONFLICT (resource_id) DO UPDATE SET
             type           = EXCLUDED.type,
             name           = EXCLUDED.name,
@@ -199,7 +200,8 @@ async def upsert_cloud_resource(db: Database, entry: dict):
             ownership_source = EXCLUDED.ownership_source,
             last_updated   = NOW(),
             last_seen      = NOW(),
-            account_name   = EXCLUDED.account_name
+            account_name   = EXCLUDED.account_name,
+            aws_account_id = EXCLUDED.aws_account_id
     """, {
         "resource_id":    entry["resource_id"],
         "type":           entry["type"],
@@ -215,6 +217,7 @@ async def upsert_cloud_resource(db: Database, entry: dict):
         "iam_user":       iam_user,
         "ownership_source": entry.get("ownership_source", "credentials"),
         "acct_name":      account_name,
+        "aws_acct_id":    aws_account_id,
     })
 
 
@@ -479,6 +482,7 @@ async def collect_ec2_and_cloudwatch(
             "iam_user":       iam_user,
             "ownership_source": ownership_source,
             "account_name":   account_name,
+            "aws_account_id": aws_account_id,
         })
 
         if idle and redis_client:
@@ -588,7 +592,8 @@ async def collect_s3(
             "recommendation": recommendation,
             "iam_user":       iam_user,
             "ownership_source": ownership_source,
-            "account_name":   account_name
+            "account_name":   account_name,
+            "aws_account_id": aws_account_id,
         })
 
         if idle and redis_client:
@@ -709,7 +714,8 @@ async def collect_lambda(
             "recommendation": recommendation,
             "iam_user":       iam_user,
             "ownership_source": ownership_source,
-            "account_name":   account_name
+            "account_name":   account_name,
+            "aws_account_id": aws_account_id,
         })
 
         if idle and redis_client:
@@ -761,6 +767,7 @@ async def collect_iam(
             "region":         "global",
             "iam_user":       user.get("metadata", {}).get("username"),
             "account_name":   account_name,
+            "aws_account_id": aws_account_id,
             "last_activity":  user.get("metadata", {}).get("create_date"),
         })
 

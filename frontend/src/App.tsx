@@ -894,7 +894,12 @@ const ResourcesTab = () => {
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md dark:bg-dark-700 bg-gray-100 border dark:border-dark-600 border-gray-200 text-[10px] font-bold dark:text-gray-300 text-gray-600 uppercase">
                         <Users size={12} className="text-brand opacity-70" />
-                        {r.iam_user || 'Unknown'}
+                        <div className="flex flex-col">
+                           <span className="font-bold">{r.aws_account_id || 'ROOT'}</span>
+                           {r.iam_user && r.iam_user !== 'unknown' && (
+                             <span className="text-[9px] lowercase opacity-60">via {r.iam_user}</span>
+                           )}
+                        </div>
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -969,8 +974,45 @@ const CloudAdminDashboard = () => {
     viewer:'bg-gray-500/20 text-gray-400 border-gray-500/30',
   };
 
+  const [clearing, setClearing] = useState(false);
+  const [clearModalOpen, setClearModalOpen] = useState(false);
+
+  const handleClearAllData = async () => {
+    setClearing(true);
+    try {
+      await axios.post(`${API_BASE}/admin/clear-all-data`);
+      alert('System logs and alerts have been wiped.');
+      setClearModalOpen(false);
+      // Refresh data
+      await queryClient.invalidateQueries();
+    } catch (err) {
+      alert('Failed to clear data');
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const headerActions = (
+    <div className="flex flex-col gap-2 w-full">
+      <button
+        onClick={() => setClearModalOpen(true)}
+        className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 text-sm font-medium transition-all"
+      >
+        <Zap size={17} />
+        <span>Clear All Logs</span>
+      </button>
+      <ThemeToggle />
+    </div>
+  );
+
   return (
-    <Layout nav={nav}>
+    <Layout nav={nav} headerActions={headerActions}>
+      <ClearDataModal 
+        isOpen={clearModalOpen} 
+        onCancel={() => setClearModalOpen(false)} 
+        onConfirm={handleClearAllData} 
+        isLoading={clearing} 
+      />
       <div className="space-y-6 animate-in fade-in duration-500">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>

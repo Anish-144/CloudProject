@@ -492,6 +492,7 @@ CREATE TABLE IF NOT EXISTS cloud_resources (
     recommendation   TEXT,
     iam_user         VARCHAR(100),
     ownership_source VARCHAR(50)  DEFAULT 'credentials',
+    aws_account_id   VARCHAR(12),
     last_seen        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     last_updated     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     account_name     VARCHAR(255)
