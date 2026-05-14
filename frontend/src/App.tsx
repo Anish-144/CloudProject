@@ -735,16 +735,16 @@ const ITAdminDashboard = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6" style={{height:'380px'}}>
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           <div className="glass-panel rounded-2xl p-6 lg:col-span-2 flex flex-col">
             <h3 className="font-semibold mb-4 flex items-center gap-2"><BarChart2 size={18} className="text-cyan-400" /> Alert Severity Breakdown</h3>
             {isLoading ? <Spinner /> : (
-              <div className="flex-1">
+              <div className="h-[300px] relative w-full mt-2">
                 <Bar data={barData} options={{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{ y:{grid:{color:'#1f2937'},ticks:{color:'#9ca3af'}}, x:{grid:{display:false},ticks:{color:'#9ca3af'}} } }} />
               </div>
             )}
           </div>
-          <div className="lg:col-span-3 h-full">
+          <div className="lg:col-span-3">
             <AlertFeed />
           </div>
         </div>
