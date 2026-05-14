@@ -9,13 +9,44 @@ CloudGuard is a full-stack application designed for cloud governance, focusing o
 - [Node.js v18+](https://nodejs.org/) (optional, for local frontend development)
 - [Python 3.11+](https://www.python.org/) (optional, for local gateway development)
 
-### Quick Start (Docker)
+## 🚀 Setup & Installation
+
+To run this platform, you will need AWS credentials with specific read-only permissions to allow CloudGuard to scan your resources, followed by starting the Docker services.
+
+### Step 1: AWS Console Setup (IAM Configuration)
+
+1. Log in to your **AWS Management Console**.
+2. Navigate to **IAM (Identity and Access Management)** > **Policies** and click **Create Policy**.
+3. Select the **JSON** tab and paste the exact contents of the `policyforiamuseronrootaccount` file located in the root of this project.
+4. Click **Next**, give the policy a name (e.g., `CloudGuard-ReadOnly-Policy`), and click **Create policy**.
+5. Navigate to **Users** and click **Create user**. Name the user (e.g., `cloudguard-service-user`).
+6. Under **Permissions options**, select **Attach policies directly** and search for the policy you just created (`CloudGuard-ReadOnly-Policy`). Select it and create the user.
+7. Go to the new user's **Security credentials** tab, and create an **Access key** (Select "Command Line Interface (CLI)" or "Other" as the use case).
+8. **Save** the `Access Key ID` and `Secret Access Key` securely.
+
+### Step 2: Environment Configuration
+
+1. In the project root directory, copy the `.env.example` file to create a new `.env` file:
+    ```bash
+    cp .env.example .env
+    ```
+    *(On Windows, you can duplicate the file in File Explorer and rename it to `.env`)*
+2. Open the `.env` file in a text editor and fill in your AWS credentials from Step 1:
+    ```ini
+    AWS_ACCESS_KEY_ID=your-aws-access-key-here
+    AWS_SECRET_ACCESS_KEY=your-aws-secret-key-here
+    AWS_DEFAULT_REGION=ap-south-1 # or your preferred region
+    ```
+    *(Note: Ensure `DATA_SOURCE_MODE=aws_live` is set to pull real AWS data)*
+
+### Step 3: Run with Docker Compose
+
 The easiest way to run the entire stack is using Docker Compose:
 
-1.  **Clone the repository** (if not already local).
-2.  **Start all services**:
+1.  **Ensure Docker is running** on your system.
+2.  **Build and start all services**:
     ```bash
-    docker compose up -d
+    docker compose up --build -d
     ```
 ### Service Access
 | Service | Link | Description |
